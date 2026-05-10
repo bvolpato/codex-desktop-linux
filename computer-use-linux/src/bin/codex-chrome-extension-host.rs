@@ -5,6 +5,7 @@ use std::{
     env, fs,
     fs::File,
     io::{self, BufRead, BufReader, ErrorKind, Read, Seek, SeekFrom, Write},
+    net::Shutdown,
     os::unix::{
         fs::{MetadataExt, PermissionsExt},
         io::AsRawFd,
@@ -86,11 +87,17 @@ impl HostState {
         }
     }
 
-    fn insert_client(&mut self, writer: SharedClientWriter) -> usize {
+    fn replace_with_client(&mut self, writer: SharedClientWriter) -> (usize, Vec<(usize, Client)>) {
+        let evicted_clients = self.clients.drain().collect::<Vec<_>>();
+        if !evicted_clients.is_empty() {
+            self.pending_chrome_requests.clear();
+            self.pending_client_requests.clear();
+        }
+
         let id = self.next_client_id;
         self.next_client_id += 1;
         self.clients.insert(id, Client { writer });
-        id
+        (id, evicted_clients)
     }
 
     fn remove_client(&mut self, client_id: usize) {
@@ -405,13 +412,28 @@ fn accept_clients(listener: UnixListener, state: SharedState) {
             }
         };
 
-        let client_id = {
+        let (client_id, evicted_clients) = {
             let mut state = state.lock().expect("host state mutex poisoned");
-            state.insert_client(writer)
+            state.replace_with_client(writer)
         };
+        for (evicted_id, evicted_client) in evicted_clients {
+            log(&format!(
+                "evicting stale browser client {evicted_id} after a newer client connected"
+            ));
+            close_client_socket(&evicted_client);
+        }
 
         let state = Arc::clone(&state);
         thread::spawn(move || read_client_messages(state, client_id, stream));
+    }
+}
+
+fn close_client_socket(client: &Client) {
+    match client.writer.lock() {
+        Ok(writer) => {
+            let _ = writer.shutdown(Shutdown::Both);
+        }
+        Err(error) => log(&format!("client socket close lock error: {error}")),
     }
 }
 
@@ -483,6 +505,13 @@ fn read_client_messages(state: SharedState, client_id: usize, stream: UnixStream
 }
 
 fn handle_client_message(state: &SharedState, client_id: usize, message: Value) {
+    {
+        let state = state.lock().expect("host state mutex poisoned");
+        if !state.clients.contains_key(&client_id) {
+            return;
+        }
+    }
+
     if is_response(&message) {
         let Some(id) = message_id_as_str(&message) else {
             return;
@@ -503,7 +532,9 @@ fn handle_client_message(state: &SharedState, client_id: usize, message: Value) 
 
     if !is_request(&message) {
         let state = state.lock().expect("host state mutex poisoned");
-        state.send_chrome(&message);
+        if state.clients.contains_key(&client_id) {
+            state.send_chrome(&message);
+        }
         return;
     }
 
@@ -532,6 +563,9 @@ fn handle_client_message(state: &SharedState, client_id: usize, message: Value) 
     };
 
     let mut state = state.lock().expect("host state mutex poisoned");
+    if !state.clients.contains_key(&client_id) {
+        return;
+    }
     let chrome_id = format!("linux-{}-{}", process::id(), state.next_chrome_id);
     state.next_chrome_id += 1;
     state.pending_chrome_requests.insert(
@@ -910,6 +944,57 @@ mod tests {
     }
 
     #[test]
+    fn replacing_browser_client_evicts_stale_clients_and_pending_requests() {
+        let mut state = test_host_state();
+
+        let (first_client_id, evicted_clients) =
+            state.replace_with_client(test_client().writer.clone());
+        assert!(evicted_clients.is_empty());
+        assert!(state.clients.contains_key(&first_client_id));
+
+        state.pending_chrome_requests.insert(
+            "chrome-request".to_string(),
+            PendingChromeRequest {
+                client_id: first_client_id,
+                client_request_id: json!("client-request-1"),
+            },
+        );
+        state.pending_client_requests.insert(
+            "client-request".to_string(),
+            PendingClientRequest {
+                client_id: first_client_id,
+                chrome_request_id: json!("chrome-request-1"),
+            },
+        );
+
+        let (second_client_id, evicted_clients) =
+            state.replace_with_client(test_client().writer.clone());
+
+        assert_ne!(first_client_id, second_client_id);
+        assert_eq!(evicted_clients.len(), 1);
+        assert_eq!(evicted_clients[0].0, first_client_id);
+        assert!(!state.clients.contains_key(&first_client_id));
+        assert!(state.clients.contains_key(&second_client_id));
+        assert!(state.pending_chrome_requests.is_empty());
+        assert!(state.pending_client_requests.is_empty());
+    }
+
+    #[test]
+    fn evicted_client_requests_are_ignored() {
+        let state = Arc::new(Mutex::new(test_host_state()));
+
+        handle_client_message(
+            &state,
+            99,
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "getTabs" }),
+        );
+
+        let state = state.lock().unwrap();
+        assert!(state.pending_chrome_requests.is_empty());
+        assert_eq!(state.next_chrome_id, 1);
+    }
+
+    #[test]
     fn disconnect_cleanup_removes_pending_state_for_client() {
         let mut pending_chrome = HashMap::from([
             (
@@ -957,6 +1042,20 @@ mod tests {
         Client {
             writer: Arc::new(Mutex::new(stream)),
         }
+    }
+
+    fn test_host_state() -> HostState {
+        let stdout = Arc::new(Mutex::new(io::stdout()));
+        HostState::new(
+            Arc::clone(&stdout),
+            RolloutTracker {
+                inner: Arc::new(Mutex::new(RolloutTrackerState {
+                    observed: HashMap::new(),
+                })),
+                stdout,
+                sessions_root: None,
+            },
+        )
     }
 
     fn unique_test_dir(prefix: &str) -> PathBuf {
