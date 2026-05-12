@@ -75,15 +75,16 @@ function withTempDir(fn) {
   }
 }
 
-function createSpawnRecorder() {
+function createSpawnRecorder({ failCommands = [] } = {}) {
   const calls = [];
+  const failures = new Set(failCommands);
   return {
     calls,
     spawn(command, args) {
       calls.push({ command, args });
       const child = new EventEmitter();
       child.unref = () => {};
-      process.nextTick(() => child.emit("close", 0));
+      process.nextTick(() => child.emit("close", failures.has(command) ? 1 : 0));
       return child;
     },
   };
@@ -277,6 +278,94 @@ test("open-target discovery launches desktop entries through gio when available"
 
     assert.deepEqual(spawnRecorder.calls, [
       { command: gio, args: ["launch", desktopFile, projectDir] },
+    ]);
+  });
+});
+
+test("open-target discovery falls back to gtk-launch when gio fails", async () => {
+  await withTempDir(async (tmp) => {
+    const dataHome = path.join(tmp, "share");
+    const appsDir = path.join(dataHome, "applications");
+    const binDir = path.join(tmp, "bin");
+    const gio = makeExecutable(binDir, "gio");
+    const gtkLaunch = makeExecutable(binDir, "gtk-launch");
+    const editorCommand = makeExecutable(path.join(tmp, "toolbox", "bin"), "workspace-agent");
+    const desktopFile = path.join(appsDir, "workspace-agent.desktop");
+    const projectDir = path.join(tmp, "project");
+    const spawnRecorder = createSpawnRecorder({ failCommands: [gio] });
+    fs.mkdirSync(appsDir, { recursive: true });
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(
+      desktopFile,
+      [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=Workspace Agent",
+        `Exec=${editorCommand} %U`,
+        "Categories=Development;",
+        "Comment=Coordinate coding agents across workspaces",
+      ].join("\n"),
+    );
+
+    const platform = evaluatePatched(
+      openTargetsBundle,
+      {
+        HOME: tmp,
+        PATH: `${binDir}:${path.dirname(editorCommand)}`,
+        XDG_DATA_HOME: dataHome,
+        XDG_DATA_DIRS: path.join(tmp, "empty"),
+      },
+      "Xg.find((target)=>target.platforms.linux?.label===`Workspace Agent`).platforms.linux",
+      spawnRecorder,
+    );
+
+    await platform.open({ command: editorCommand, path: projectDir });
+
+    assert.deepEqual(spawnRecorder.calls, [
+      { command: gio, args: ["launch", desktopFile, projectDir] },
+      { command: gtkLaunch, args: ["workspace-agent", pathToFileURL(projectDir).toString()] },
+    ]);
+  });
+});
+
+test("open-target discovery falls back to the Exec command", async () => {
+  await withTempDir(async (tmp) => {
+    const dataHome = path.join(tmp, "share");
+    const appsDir = path.join(dataHome, "applications");
+    const editorCommand = makeExecutable(path.join(tmp, "toolbox", "bin"), "workspace-agent");
+    const desktopFile = path.join(appsDir, "workspace-agent.desktop");
+    const projectDir = path.join(tmp, "project");
+    const spawnRecorder = createSpawnRecorder();
+    fs.mkdirSync(appsDir, { recursive: true });
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(
+      desktopFile,
+      [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=Workspace Agent",
+        `Exec=${editorCommand} --goto %f`,
+        "Categories=Development;",
+        "Comment=Coordinate coding agents across workspaces",
+      ].join("\n"),
+    );
+
+    const platform = evaluatePatched(
+      openTargetsBundle,
+      {
+        HOME: tmp,
+        PATH: path.dirname(editorCommand),
+        XDG_DATA_HOME: dataHome,
+        XDG_DATA_DIRS: path.join(tmp, "empty"),
+      },
+      "Xg.find((target)=>target.platforms.linux?.label===`Workspace Agent`).platforms.linux",
+      spawnRecorder,
+    );
+
+    await platform.open({ command: editorCommand, path: projectDir });
+
+    assert.deepEqual(spawnRecorder.calls, [
+      { command: editorCommand, args: ["--goto", projectDir] },
     ]);
   });
 });
