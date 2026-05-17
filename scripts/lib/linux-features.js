@@ -166,9 +166,11 @@ function wrapFeaturePatchDescriptor(feature, descriptor, sourcePath, index, feat
     return null;
   }
 
+  const wrappedId = prefixedFeaturePatchId(feature, descriptorId);
   const wrapped = {
     ...descriptor,
-    id: prefixedFeaturePatchId(feature, descriptorId),
+    id: wrappedId,
+    name: descriptor.name ?? wrappedId,
     ciPolicy: descriptor.ciPolicy ?? "optional",
     order: descriptor.order ?? 20_000 + featureIndex * 100 + index * 10,
     sourcePath,

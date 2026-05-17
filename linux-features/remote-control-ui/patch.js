@@ -18,18 +18,25 @@ function replaceOnce(source, needle, replacement, patchName) {
 }
 
 function applyRemoteConnectionsVisibilityPatch(source) {
-  return replaceOnce(
-    source,
-    "return c;",
-    `return c||${LINUX_GATE};`,
-    "remote control UI remote connections visibility patch",
+  const patched = source.replace(
+    /([A-Za-z_$][\w$]*)\(`4114442250`\)(?!\|\|navigator\.userAgent\.includes\(`Linux`\))/g,
+    `($1(\`4114442250\`)||${LINUX_GATE})`,
   );
+  if (patched !== source || source.includes(`||${LINUX_GATE}`)) {
+    return patched;
+  }
+  warn("Could not find remote connections Statsig gate", "remote control UI remote connections visibility patch");
+  return source;
 }
 
 function applyRemoteControlConnectionsVisibilityPatch(source) {
-  const patched = source.replace(
+  let patched = source.replace(
     /return!!([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\?\.available===!0(?!\|\|navigator\.userAgent\.includes\(`Linux`\))/g,
     `return!!$1&&$2?.available===!0||${LINUX_GATE}`,
+  );
+  patched = patched.replace(
+    /return\s+([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)\?\.available\?\?!0\)&&\2\?\.accessRequired!==!0(?!&&navigator\.userAgent\.includes\(`Linux`\))/g,
+    `return ($1||${LINUX_GATE})&&($2?.available??!0)&&$2?.accessRequired!==!0`,
   );
   if (patched !== source || source.includes(`||${LINUX_GATE}`)) {
     return patched;
@@ -60,11 +67,14 @@ function applyExperimentalFeaturesPatch(source) {
 
 function applyMobileStatsigLinuxPatch(source, patchName) {
   const patched = source.replace(
-    /o\(`2798711298`\)(?!\|\|navigator\.userAgent\.includes\(`Linux`\))/g,
-    `o(\`2798711298\`)||${LINUX_GATE}`,
+    /([A-Za-z_$][\w$]*)\(`2798711298`\)(?!\|\|navigator\.userAgent\.includes\(`Linux`\))/g,
+    `($1(\`2798711298\`)||${LINUX_GATE})`,
   );
-  if (patched !== source || source.includes(`o(\`2798711298\`)||${LINUX_GATE}`)) {
+  if (patched !== source || source.includes(`||${LINUX_GATE}`)) {
     return patched;
+  }
+  if (source.includes("remote-connection-visibility-")) {
+    return source;
   }
   warn("Could not find mobile Statsig gate", patchName);
   return source;
