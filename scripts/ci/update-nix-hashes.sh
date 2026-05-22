@@ -23,6 +23,31 @@ validate_sri_hash() {
     [[ "$hash" =~ ^sha256-[A-Za-z0-9+/=]{44}$ ]]
 }
 
+read_flake_string() {
+    local name="$1"
+    grep -m1 "$name = " "$FLAKE_FILE" | sed 's/.*"\(.*\)".*/\1/'
+}
+
+prefetch_sri() {
+    local url="$1"
+    nix store prefetch-file --json --hash-type sha256 "$url" \
+        | python3 -c 'import sys, json; print(json.load(sys.stdin)["hash"])'
+}
+
+# When electronVersion changes, the electron zip + headers URLs move to the new
+# version while flake.nix keeps the old fixed-output hashes, so the verify build
+# would fail. Refresh both per-arch electron zip hashes and the headers hash.
+refresh_electron_hashes() {
+    local version="$1"
+    local base="https://github.com/electron/electron/releases/download/v${version}"
+    replace_flake_hash "x86_64-linux = {" "hash = " \
+        "$(prefetch_sri "${base}/electron-v${version}-linux-x64.zip")"
+    replace_flake_hash "aarch64-linux = {" "hash = " \
+        "$(prefetch_sri "${base}/electron-v${version}-linux-arm64.zip")"
+    replace_flake_hash "electronHeaders = pkgs.fetchurl {" "hash = " \
+        "$(prefetch_sri "https://artifacts.electronjs.org/headers/dist/v${version}/node-v${version}-headers.tar.gz")"
+}
+
 replace_flake_hash() {
     local anchor="$1"
     local key="$2"
@@ -116,6 +141,9 @@ main() {
     # moving Codex.dmg has caught up to the appcast's advertised latest version,
     # so we never pin a transient mid-rollout build. Exit 75 means "rollout in
     # progress" and is treated as a no-op skip.
+    local old_electron_version
+    old_electron_version="$(read_flake_string electronVersion)"
+
     local validate_status=0
     WRITE_PINS=1 APPCAST_URL="$APPCAST_URL" \
         "$REPO_DIR/scripts/ci/validate-nix-pins.sh" "$UPSTREAM_DMG_PATH" || validate_status="$?"
@@ -125,6 +153,22 @@ main() {
     fi
     if [ "$validate_status" -ne 0 ]; then
         exit "$validate_status"
+    fi
+
+    # If the Electron pin moved, refresh its fixed-output hashes so the verify
+    # build does not fail on the new download URLs.
+    local new_electron_version
+    new_electron_version="$(read_flake_string electronVersion)"
+    if [ "$old_electron_version" != "$new_electron_version" ]; then
+        echo "Electron pin: $old_electron_version -> $new_electron_version; refreshing electron hashes."
+        refresh_electron_hashes "$new_electron_version"
+    fi
+
+    # Regenerate the native-module lockfile whenever its package.json changed, so
+    # the committed refresh stays reproducible for importNpmLock / npm ci.
+    if ! git -C "$REPO_DIR" diff --quiet -- nix/native-modules/package.json; then
+        echo "native-modules package.json changed; regenerating package-lock.json."
+        ( cd "$REPO_DIR/nix/native-modules" && npm install --package-lock-only --ignore-scripts >/dev/null )
     fi
 
     current_dmg_hash="$(read_flake_hash "codexDmg = pkgs.fetchurl {" "hash = ")"
