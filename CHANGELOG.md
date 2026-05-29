@@ -37,6 +37,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   config, saves selections to `~/.config/<appId>/linux-features.json`, and
   skips without blocking the update when there is no display, no dialog tool, a
   dialog launch failure, or a cancellation.
+- The opt-in `codex-wrapper-updater` toolbar now shows the installed short
+  wrapper commit as a SHA chip when build metadata is available, and shows a
+  disabled "dev mode" action when the installed commit is ahead of the tracked
+  remote.
 - Launcher rendering mode `CODEX_LINUX_RENDERING_MODE=wayland-gpu`, which
   forces native Wayland with GPU compositing enabled and skips forced renderer
   accessibility by default for Wayland desktops where XWayland or software
@@ -52,6 +56,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The wrapper updater no longer offers a "downgrade as update" when the
+  installed build is ahead of the tracked remote. Detection records dev mode
+  when the candidate does not descend from the installed commit, clears stale
+  wrapper candidates when detection is not valid, and the apply path refuses to
+  run while dev mode is recorded.
 - Nix builds now rewrite crates.io API crate download URLs to the static
   crates.io CDN path, avoiding PR-only CI failures from crates.io API 403s
   while preserving the same lockfile checksums.

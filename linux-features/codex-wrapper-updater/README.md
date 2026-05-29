@@ -58,6 +58,20 @@ features the rebuild stages.
 - No display, no dialog tool, no recorded candidate catalog, or a dialog launch
   failure skips the prompt and leaves the current feature set unchanged.
 
+## Toolbar states
+
+- A **SHA chip** shows the installed short commit when build metadata is
+  available (a git-ref-style pill, e.g. `5fcfea9`), so you can see which build
+  is running.
+- The action chip is color-coded:
+  - **green Update** means a genuinely newer upstream build is available.
+  - **amber dev mode** (non-clickable) means the installed build appears to be
+    ahead of the tracked remote, so updating would be a downgrade; the update
+    action is suppressed and the apply path refuses.
+- "Ahead of upstream" is decided by fetching the tracked branch and checking
+  whether the candidate descends from the installed commit. Offline or
+  non-git/frozen bundles clear stale candidates and show no update action.
+
 ## Why this is a Linux feature
 
 The wrapper updater is opt-in and lives under `linux-features/` because it is
