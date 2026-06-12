@@ -22,6 +22,7 @@ const {
   applyLinuxAvatarOverlayMousePassthroughPatch,
   applyBrowserUseNodeReplApprovalPatch,
   applyLinuxBrowserUseIabVisibleOnCreatePatch,
+  applyLinuxBrowserUseRouteLivenessPatch,
   applyLinuxChromeExtensionStatusPatch,
   applyLinuxChromeNativeHostRuntimePatch,
   applyLinuxChromePluginAutoInstallPatch,
@@ -49,6 +50,7 @@ const {
   applyLinuxFastModeModelGuardPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
   applyLinuxReadyToShowWindowStatePatch,
+  applyLinuxResizeRepaintPatch,
   applyLinuxSetIconPatch,
   applyLinuxRemoteControlConfigPreservationPatch,
   applyLinuxSingleInstancePatch,
@@ -120,7 +122,7 @@ const opaqueBackgroundBundleWithDriftingGw =
 const currentOpaqueBackgroundBundle =
   "var QK=`#00000000`,$K=`#000000`,eq=`#f9f9f9`;function vq(e){return e===`avatarOverlay`||e===`browserCommentPopup`||e===`globalDictation`||e===`hotkeyWindowHome`||e===`hotkeyWindowThread`}function xq({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return n&&!vq(t)&&(e===`darwin`||e===`win32`)?{backgroundColor:r?$K:eq,backgroundMaterial:e===`win32`?`none`:null}:e===`win32`&&!vq(t)?{backgroundColor:QK,backgroundMaterial:`mica`}:{backgroundColor:QK,backgroundMaterial:null}}";
 const currentOpaqueWindowSurfaceBackgroundBundle =
-  "var W4=`#00000000`,G4=`#000000`,K4=`#f9f9f9`;function g3(e){return e===`avatarOverlay`||e===`browserCommentPopup`||e===`globalDictation`||e===`hotkeyWindowHome`||e===`hotkeyWindowThread`||e===`hud`}function S3({platform:e,appearance:t,opaqueWindowSurfaceEnabled:n,prefersDarkColors:r}){return n?{backgroundColor:r?G4:K4,backgroundMaterial:e===`win32`?`none`:null}:e===`win32`&&!g3(t)?{backgroundColor:W4,backgroundMaterial:`mica`}:{backgroundColor:W4,backgroundMaterial:null}}";
+  "var W4=`#00000000`,G4=`#000000`,K4=`#f9f9f9`;function g3(e){return e===`avatarOverlay`||e===`browserCommentPopup`||e===`globalDictation`||e===`hotkeyWindowHome`||e===`hotkeyWindowThread`||e===`hud`}function v3({appearance:e,opaqueWindowsEnabled:t,platform:n}){return t&&!g3(e)&&(n===`darwin`||n===`win32`)}function S3({platform:e,appearance:t,opaqueWindowSurfaceEnabled:n,prefersDarkColors:r}){return n?{backgroundColor:r?G4:K4,backgroundMaterial:e===`win32`?`none`:null}:e===`win32`&&!g3(t)?{backgroundColor:W4,backgroundMaterial:`mica`}:{backgroundColor:W4,backgroundMaterial:null}}class k3{isOpaqueWindowsEnabled(){return theme?.opaqueWindows===!0}shouldUseOpaqueWindowSurface(e,t,n){return this.shouldAlwaysUseOpaqueWindowSurface(e)}shouldAlwaysUseOpaqueWindowSurface(e){return v3({appearance:e,opaqueWindowsEnabled:this.isOpaqueWindowsEnabled(),platform:process.platform})||!BA()&&!g3(e)}}";
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -618,6 +620,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-menu",
     "linux-multi-instance-bootstrap-lock",
     "linux-set-icon",
+    "linux-resize-repaint",
     "linux-opaque-background",
     "linux-avatar-overlay-mouse-passthrough",
     "linux-browser-use-availability",
@@ -632,6 +635,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-chrome-plugin-auto-install",
     "linux-chrome-native-host-runtime",
     "browser-use-node-repl-approval",
+    "linux-browser-use-route-liveness",
     "linux-chrome-extension-status",
     "linux-remote-control-config-preservation",
     "linux-app-updater-menu",
@@ -1511,6 +1515,10 @@ test("patches current opaque window surface background helper shape for Linux", 
   assert.match(
     patched,
     /:e===`linux`&&!g3\(t\)\?\{backgroundColor:r\?G4:K4,backgroundMaterial:null\}:e===`win32`&&!g3\(t\)\?/,
+  );
+  assert.match(
+    patched,
+    /shouldAlwaysUseOpaqueWindowSurface\(e\)\{return process\.platform===`linux`&&!g3\(e\)\|\|v3\(\{appearance:e,opaqueWindowsEnabled:this\.isOpaqueWindowsEnabled\(\),platform:process\.platform\}\)\|\|!BA\(\)&&!g3\(e\)\}/,
   );
   assert.match(patched, /opaqueWindowSurfaceEnabled:n/);
 });
@@ -2395,6 +2403,49 @@ test("gates ready-to-show maximize behind restored maximized state", () => {
   );
 });
 
+test("installs Linux resize repaint hook without ungating ready-to-show maximize", () => {
+  const source = [
+    "let E=x?.isMaximized===!0,D={handlers:{},once(){},on(e,t){this.handlers[e]=t},isDestroyed(){return false},maximize(){},webContents:{isDestroyed(){return false},invalidate(){globalThis.__resizeRepaintCalls++}}},F={once(){},on(){},isDestroyed(){return false},webContents:{invalidate(){}}};",
+    "E&&D.once(`ready-to-show`,()=>{D.isDestroyed()||D.maximize()});",
+    "F.once(`ready-to-show`,()=>{});",
+    "globalThis.__resizeRepaintWindow=D;",
+  ].join("");
+
+  const patched = applyPatchTwice(
+    applyLinuxResizeRepaintPatch,
+    applyLinuxReadyToShowWindowStatePatch(source),
+  );
+
+  assert.match(patched, /function codexLinuxInstallResizeRepaintHook\(e\)/);
+  assert.match(
+    patched,
+    /process\.platform===`linux`&&codexLinuxInstallResizeRepaintHook\(D\),E&&D\.once\(`ready-to-show`,\(\)=>\{D\.isDestroyed\(\)\|\|D\.maximize\(\)\}\);/,
+  );
+  assert.match(
+    patched,
+    /process\.platform===`linux`&&codexLinuxInstallResizeRepaintHook\(F\),F\.once\(`ready-to-show`,\(\)=>\{\}\);/,
+  );
+  assert.match(
+    patched,
+    /setTimeout\(\(\)=>\{if\(__codexResizeRepaintScheduled=!1,e\.isDestroyed\(\)\)return;let __codexWebContents=e\.webContents;__codexWebContents==null\|\|__codexWebContents\.isDestroyed\?\.\(\)\|\|typeof __codexWebContents\.invalidate==`function`&&__codexWebContents\.invalidate\(\)\},16\)/,
+  );
+
+  const context = {
+    __resizeRepaintCalls: 0,
+    process: { platform: "linux" },
+    setTimeout(callback) {
+      callback();
+    },
+    x: { isMaximized: true },
+  };
+  context.globalThis = context;
+  vm.runInNewContext(
+    `${patched};codexLinuxInstallResizeRepaintHook(globalThis.__resizeRepaintWindow);globalThis.__resizeRepaintWindow.handlers.resize();`,
+    context,
+  );
+  assert.equal(context.__resizeRepaintCalls, 1);
+});
+
 test("skips the launch-action patch without throwing when upstream startup architecture changes", () => {
   const source = [
     "async function Sg(){",
@@ -2896,6 +2947,7 @@ test("adds Linux package updater behind the existing app updater manager", () =>
   assert.match(patched, /if\(!this\.options\.enableUpdater&&process\.platform!==`linux`\)/);
   assert.match(patched, /process\.platform===`linux`\?await this\.initializeLinuxPackageUpdater\(\)/);
   assert.match(patched, /async initializeLinuxPackageUpdater\(\)/);
+  assert.match(patched, /this\.updater=\{setAutomaticBackgroundDownloadsEnabled:\(\)=>\{\},checkForUpdates/);
   assert.match(patched, /codexLinuxRunUpdateManager\(\[`check-now`\]\)/);
   assert.match(patched, /codexLinuxRunUpdateManager\(\[`install-ready`\]\)/);
   assert.match(patched, /this\.setInstallProgressPercent\(0\),this\.setUpdateLifecycleState\(`installing`\)/);
@@ -2952,6 +3004,7 @@ test("adds Linux package updater to current bootstrap updater wiring", () => {
   assert.match(patched, /codexLinuxRunUpdateManager\(\[`--help`\]\)/);
   assert.match(patched, /async function codexLinuxRefreshUpdateState\(\)\{return codexLinuxReadUpdateState\(\)\}/);
   assert.match(patched, /codexLinuxProbeUpdateManager\(\)\.then\(\(\)=>\{s=!0,i\(\),a\(\);return!0\}\)/);
+  assert.match(patched, /manager:\{setAutomaticBackgroundDownloadsEnabled:\(\)=>\{\}/);
   assert.match(patched, /getIsUpdateReady:\(\)=>s&&t/);
   assert.match(patched, /checkForUpdates:async\(\)=>\{if\(!await c\)return;n=`checking`/);
   assert.match(patched, /installUpdatesIfAvailable:async\(\)=>\{if\(!await c\)\{a\(\);return\}i\(\);if\(!t\)\{a\(\);return\}/);
@@ -3698,6 +3751,58 @@ test("patches later Browser Use navigation dispatches when an earlier one is alr
     2,
   );
   assert.doesNotMatch(patched, /browser-use-non-local-sites-allowed-changed`,\{allowed:p\}/);
+});
+
+test("falls back to the single live Linux Browser Use route window", () => {
+  const source =
+    "var kK=t.Ur(`browser-sidebar-manager`);" +
+    "function AK({ensureWindowState:e,windowId:t,windows:n}){let i=n.get(t)??null;if(i==null){let n=r.BrowserWindow.fromId(t);n!=null&&!n.isDestroyed()&&!n.webContents.isDestroyed()&&(i=e(n,n.webContents))}return i==null||i.window.isDestroyed()||i.owner.isDestroyed()?(kK().warning(`IAB_LIFECYCLE route window is not live`,{safe:{hasWindowState:i!=null,ownerDestroyed:i?.owner.isDestroyed()??null,windowDestroyed:i?.window.isDestroyed()??null,windowId:t},sensitive:{}}),null):i}";
+
+  const patched = applyPatchTwice(applyLinuxBrowserUseRouteLivenessPatch, source);
+
+  assert.match(patched, /function codexLinuxResolveLiveBrowserUseRouteWindow/);
+  assert.match(patched, /i==null&&\(i=codexLinuxResolveLiveBrowserUseRouteWindow\(e,t,n,r\)\);return/);
+  assert.equal((patched.match(/codexLinuxResolveLiveBrowserUseRouteWindow/g) || []).length, 2);
+
+  const webContents = { isDestroyed: () => false };
+  const window = { id: 7, isDestroyed: () => false, webContents };
+  const context = {
+    process: { platform: "linux" },
+    r: { BrowserWindow: { fromId: () => null, getAllWindows: () => [window] } },
+    t: { Ur: () => () => ({ warning: () => assert.fail("fallback should avoid warning") }) },
+  };
+  const result = vm.runInNewContext(
+    `${patched};AK({ensureWindowState:(window,owner)=>({owner,threads:new Map,window}),windowId:42,windows:new Map})`,
+    context,
+  );
+
+  assert.equal(result.window.id, 7);
+  assert.equal(result.owner, webContents);
+});
+
+test("keeps Browser Use route liveness fallback inactive when ambiguous", () => {
+  const source =
+    "var kK=t.Ur(`browser-sidebar-manager`);" +
+    "function AK({ensureWindowState:e,windowId:t,windows:n}){let i=n.get(t)??null;if(i==null){let n=r.BrowserWindow.fromId(t);n!=null&&!n.isDestroyed()&&!n.webContents.isDestroyed()&&(i=e(n,n.webContents))}return i==null||i.window.isDestroyed()||i.owner.isDestroyed()?(kK().warning(`IAB_LIFECYCLE route window is not live`,{safe:{hasWindowState:i!=null,ownerDestroyed:i?.owner.isDestroyed()??null,windowDestroyed:i?.window.isDestroyed()??null,windowId:t},sensitive:{}}),null):i}";
+  const patched = applyLinuxBrowserUseRouteLivenessPatch(source);
+  const webContents = { isDestroyed: () => false };
+  const windows = [
+    { id: 7, isDestroyed: () => false, webContents },
+    { id: 8, isDestroyed: () => false, webContents },
+  ];
+  let warnings = 0;
+  const context = {
+    process: { platform: "linux" },
+    r: { BrowserWindow: { fromId: () => null, getAllWindows: () => windows } },
+    t: { Ur: () => () => ({ warning: () => { warnings += 1; } }) },
+  };
+  const result = vm.runInNewContext(
+    `${patched};AK({ensureWindowState:(window,owner)=>({owner,window}),windowId:42,windows:new Map})`,
+    context,
+  );
+
+  assert.equal(result, null);
+  assert.equal(warnings, 1);
 });
 
 test("shows object-helper Computer Use plugin UI on Linux", () => {

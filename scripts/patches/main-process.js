@@ -285,7 +285,8 @@ function applyLinuxSetIconPatch(currentSource, iconAsset) {
   let patchedAny = false;
   const patchedSource = currentSource.replace(readyRegex, (match, windowVar, offset) => {
     const linuxPatch = `process.platform===\`linux\`&&${windowVar}.setIcon(${iconPathExpression}),`;
-    if (currentSource.slice(Math.max(0, offset - linuxPatch.length), offset) === linuxPatch) {
+    const prefix = currentSource.slice(Math.max(0, offset - Math.max(400, linuxPatch.length * 2)), offset);
+    if (prefix.includes(linuxPatch)) {
       return match;
     }
     patchedAny = true;
@@ -333,30 +334,97 @@ function applyLinuxReadyToShowWindowStatePatch(currentSource) {
   return currentSource;
 }
 
-function applyLinuxOpaqueBackgroundPatch(currentSource) {
-  if (
-    currentSource.includes("===`linux`&&!OM(") ||
-    /===`linux`&&![A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)\?\{backgroundColor:[^{}]+,backgroundMaterial:null\}/.test(currentSource)
-  ) {
+function applyLinuxResizeRepaintPatch(currentSource) {
+  const helperName = "codexLinuxInstallResizeRepaintHook";
+  const helper =
+    "function codexLinuxInstallResizeRepaintHook(e){if(!(process.platform===`linux`)||e.__codexLinuxResizeRepaintHookInstalled)return;e.__codexLinuxResizeRepaintHookInstalled=!0;let __codexResizeRepaintScheduled=!1,__codexResizeRepaint=()=>{__codexResizeRepaintScheduled||(__codexResizeRepaintScheduled=!0,setTimeout(()=>{if(__codexResizeRepaintScheduled=!1,e.isDestroyed())return;let __codexWebContents=e.webContents;__codexWebContents==null||__codexWebContents.isDestroyed?.()||typeof __codexWebContents.invalidate==`function`&&__codexWebContents.invalidate()},16))};e.on(`resize`,__codexResizeRepaint),e.on(`resized`,__codexResizeRepaint)}";
+  const readyToShowRegex =
+    /(^|[^A-Za-z0-9_$])((?:[A-Za-z_$][\w$]*&&)?)([A-Za-z_$][\w$]*)\.once\(`ready-to-show`,\(\)=>\{/g;
+  let patchedAny = false;
+  const patchedSource = currentSource.replace(
+    readyToShowRegex,
+    (match, leading, guardPrefix, windowVar, offset, source) => {
+      const linuxPatch = `process.platform===\`linux\`&&${helperName}(${windowVar}),`;
+      const insertionPoint = offset + leading.length;
+      const prefix = source.slice(Math.max(0, insertionPoint - Math.max(400, linuxPatch.length * 2)), insertionPoint);
+      if (prefix.includes(linuxPatch)) {
+        return match;
+      }
+      patchedAny = true;
+      return `${leading}${linuxPatch}${guardPrefix}${windowVar}.once(\`ready-to-show\`,()=>{`;
+    },
+  );
+
+  if (!patchedAny) {
+    if (currentSource.includes(`${helperName}(`)) {
+      return currentSource;
+    }
+    if (currentSource.includes("ready-to-show")) {
+      console.warn("WARN: Could not find ready-to-show hook — skipping Linux resize repaint patch");
+    }
     return currentSource;
+  }
+
+  if (patchedSource.includes(`function ${helperName}(`)) {
+    return patchedSource;
+  }
+
+  for (const prefix of ['"use strict";', "'use strict';"]) {
+    if (patchedSource.startsWith(prefix)) {
+      return `${prefix}${helper}${patchedSource.slice(prefix.length)}`;
+    }
+  }
+
+  return `${helper}${patchedSource}`;
+}
+
+function applyLinuxOpaqueBackgroundPatch(currentSource) {
+  let patchedSource = currentSource;
+  const shouldAlwaysOpaqueSurfaceRegex =
+    /shouldAlwaysUseOpaqueWindowSurface\(([A-Za-z_$][\w$]*)\)\{return\s*([A-Za-z_$][\w$]*)\(\{appearance:\1,opaqueWindowsEnabled:this\.isOpaqueWindowsEnabled\(\),platform:process\.platform\}\)\|\|!([A-Za-z_$][\w$]*)\(\)&&!([A-Za-z_$][\w$]*)\(\1\)\}/u;
+  const shouldAlwaysOpaqueSurfaceMatch = patchedSource.match(shouldAlwaysOpaqueSurfaceRegex);
+  if (shouldAlwaysOpaqueSurfaceMatch != null) {
+    const [
+      match,
+      appearanceParam,
+      opaqueSurfaceHelper,
+      nativeSurfaceCapabilityHelper,
+      transparentAppearancePredicate,
+    ] = shouldAlwaysOpaqueSurfaceMatch;
+    const replacement =
+      `shouldAlwaysUseOpaqueWindowSurface(${appearanceParam}){return process.platform===\`linux\`&&!${transparentAppearancePredicate}(${appearanceParam})||${opaqueSurfaceHelper}({appearance:${appearanceParam},opaqueWindowsEnabled:this.isOpaqueWindowsEnabled(),platform:process.platform})||!${nativeSurfaceCapabilityHelper}()&&!${transparentAppearancePredicate}(${appearanceParam})}`;
+    patchedSource = patchedSource.replace(match, replacement);
+  } else if (
+    /shouldAlwaysUseOpaqueWindowSurface\([A-Za-z_$][\w$]*\)\{return\s*process\.platform===`linux`&&!/.test(patchedSource)
+  ) {
+    // Already patched.
+  } else if (patchedSource.includes("shouldAlwaysUseOpaqueWindowSurface(")) {
+    console.warn("WARN: Could not find opaque surface mode predicate — skipping Linux opaque surface patch");
+  }
+
+  if (
+    patchedSource.includes("===`linux`&&!OM(") ||
+    /===`linux`&&![A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)\?\{backgroundColor:[^{}]+,backgroundMaterial:null\}/.test(patchedSource)
+  ) {
+    return patchedSource;
   }
 
   const colorConstRegex =
     /([A-Za-z_$][\w$]*)=`#00000000`,([A-Za-z_$][\w$]*)=`#000000`,([A-Za-z_$][\w$]*)=`#f9f9f9`/;
-  const colorMatch = currentSource.match(colorConstRegex);
+  const colorMatch = patchedSource.match(colorConstRegex);
 
   if (!colorMatch) {
     console.warn(
       "WARN: Could not find color constants (#00000000, #000000, #f9f9f9) — skipping background patch",
     );
-    return currentSource;
+    return patchedSource;
   }
 
   const [, transparentVar, darkVar, lightVar] = colorMatch;
 
   const currentFuncParamRegex =
     /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaqueWindowsEnabled:([A-Za-z_$][\w$]*),prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\3&&!([A-Za-z_$][\w$]*)\(\2\)&&\(\1===`darwin`\|\|\1===`win32`\)\?/;
-  const currentFuncMatch = currentSource.match(currentFuncParamRegex);
+  const currentFuncMatch = patchedSource.match(currentFuncParamRegex);
   if (currentFuncMatch != null) {
     const [, platformParam, appearanceParam, , darkColorsParam, transparentAppearancePredicate] =
       currentFuncMatch;
@@ -365,20 +433,20 @@ function applyLinuxOpaqueBackgroundPatch(currentSource) {
     const linuxBgPrefix =
       `:${platformParam}===\`linux\`&&!${transparentAppearancePredicate}(${appearanceParam})?{backgroundColor:${darkColorsParam}?${darkVar}:${lightVar},backgroundMaterial:null}:`;
 
-    if (currentSource.includes(linuxBgPrefix)) {
-      return currentSource;
+    if (patchedSource.includes(linuxBgPrefix)) {
+      return patchedSource;
     }
-    if (currentSource.includes(win32Needle)) {
-      return currentSource.replace(win32Needle, `${linuxBgPrefix}${win32Needle.slice(1)}`);
+    if (patchedSource.includes(win32Needle)) {
+      return patchedSource.replace(win32Needle, `${linuxBgPrefix}${win32Needle.slice(1)}`);
     }
 
     console.warn("WARN: Could not find BrowserWindow background color needle — skipping background patch");
-    return currentSource;
+    return patchedSource;
   }
 
   const currentSurfaceFuncParamRegex =
     /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaqueWindowSurfaceEnabled:([A-Za-z_$][\w$]*),prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\3\?\{backgroundColor:\4\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*),backgroundMaterial:\1===`win32`\?`none`:null\}:\1===`win32`&&!([A-Za-z_$][\w$]*)\(\2\)\?/;
-  const currentSurfaceFuncMatch = currentSource.match(currentSurfaceFuncParamRegex);
+  const currentSurfaceFuncMatch = patchedSource.match(currentSurfaceFuncParamRegex);
   if (currentSurfaceFuncMatch != null) {
     const [, platformParam, appearanceParam, , darkColorsParam, darkVarFromReturn, lightVarFromReturn, transparentAppearancePredicate] =
       currentSurfaceFuncMatch;
@@ -387,24 +455,24 @@ function applyLinuxOpaqueBackgroundPatch(currentSource) {
     const linuxBgPrefix =
       `:${platformParam}===\`linux\`&&!${transparentAppearancePredicate}(${appearanceParam})?{backgroundColor:${darkColorsParam}?${darkVarFromReturn}:${lightVarFromReturn},backgroundMaterial:null}:`;
 
-    if (currentSource.includes(linuxBgPrefix)) {
-      return currentSource;
+    if (patchedSource.includes(linuxBgPrefix)) {
+      return patchedSource;
     }
-    if (currentSource.includes(win32Needle)) {
-      return currentSource.replace(win32Needle, `${linuxBgPrefix}${win32Needle.slice(1)}`);
+    if (patchedSource.includes(win32Needle)) {
+      return patchedSource.replace(win32Needle, `${linuxBgPrefix}${win32Needle.slice(1)}`);
     }
 
     console.warn("WARN: Could not find BrowserWindow background color needle — skipping background patch");
-    return currentSource;
+    return patchedSource;
   }
 
   const funcParamRegex =
     /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaqueWindowsEnabled:[A-Za-z_$][\w$]*,prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\1===`win32`&&!([A-Za-z_$][\w$]*)\(\2\)/;
-  const funcMatch = currentSource.match(funcParamRegex);
+  const funcMatch = patchedSource.match(funcParamRegex);
 
   if (funcMatch == null) {
     console.warn("WARN: Could not find BrowserWindow background function signature — skipping background patch");
-    return currentSource;
+    return patchedSource;
   }
 
   const [, platformParam, appearanceParam, darkColorsParam, transparentAppearancePredicate] =
@@ -416,15 +484,15 @@ function applyLinuxOpaqueBackgroundPatch(currentSource) {
   const bgReplacement =
     `backgroundMaterial:\`mica\`}:${platformParam}===\`linux\`&&!${transparentAppearancePredicate}(${appearanceParam})?{backgroundColor:${darkColorsParam}?${darkVar}:${lightVar},backgroundMaterial:null}:{backgroundColor:${transparentVar},backgroundMaterial:null}}`;
 
-  if (currentSource.includes(bgNeedle)) {
-    return currentSource.replace(bgNeedle, bgReplacement);
+  if (patchedSource.includes(bgNeedle)) {
+    return patchedSource.replace(bgNeedle, bgReplacement);
   }
-  if (currentSource.includes(oldLinuxBgPatch)) {
-    return currentSource.replace(oldLinuxBgPatch, bgReplacement);
+  if (patchedSource.includes(oldLinuxBgPatch)) {
+    return patchedSource.replace(oldLinuxBgPatch, bgReplacement);
   }
 
   console.warn("WARN: Could not find BrowserWindow background color needle — skipping background patch");
-  return currentSource;
+  return patchedSource;
 }
 
 function applyLinuxAboutDialogPatch(currentSource, iconPathExpression) {
@@ -1248,6 +1316,45 @@ function applyBrowserUseNodeReplApprovalPatch(currentSource) {
   return patchedSource;
 }
 
+function applyLinuxBrowserUseRouteLivenessPatch(currentSource) {
+  if (currentSource.includes("codexLinuxResolveLiveBrowserUseRouteWindow")) {
+    return currentSource;
+  }
+
+  const routeWindowPattern =
+    /function ([A-Za-z_$][\w$]*)\(\{ensureWindowState:([A-Za-z_$][\w$]*),windowId:([A-Za-z_$][\w$]*),windows:([A-Za-z_$][\w$]*)\}\)\{let ([A-Za-z_$][\w$]*)=\4\.get\(\3\)\?\?null;if\(\5==null\)\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.BrowserWindow\.fromId\(\3\);\6!=null&&!\6\.isDestroyed\(\)&&!\6\.webContents\.isDestroyed\(\)&&\(\5=\2\(\6,\6\.webContents\)\)\}return \5==null\|\|\5\.window\.isDestroyed\(\)\|\|\5\.owner\.isDestroyed\(\)\?\(([A-Za-z_$][\w$]*)\(\)\.warning\(`IAB_LIFECYCLE route window is not live`,\{safe:\{hasWindowState:\5!=null,ownerDestroyed:\5\?\.owner\.isDestroyed\(\)\?\?null,windowDestroyed:\5\?\.window\.isDestroyed\(\)\?\?null,windowId:\3\},sensitive:\{\}\}\),null\):\5\}/u;
+
+  const match = currentSource.match(routeWindowPattern);
+  if (match == null) {
+    if (
+      currentSource.includes("IAB_LIFECYCLE route window is not live") &&
+      currentSource.includes("BrowserWindow.fromId")
+    ) {
+      console.warn(
+        "WARN: Could not find Browser Use route liveness helper — skipping Linux route liveness fallback patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const [
+    original,
+    functionName,
+    ensureWindowStateVar,
+    windowIdVar,
+    windowsVar,
+    stateVar,
+    browserWindowVar,
+    electronVar,
+    loggerVar,
+  ] = match;
+
+  const helper = `function codexLinuxResolveLiveBrowserUseRouteWindow(e,t,n,r){if(process.platform!==\`linux\`)return null;let i=[];try{for(let e of n.values())e!=null&&!e.window.isDestroyed()&&!e.owner.isDestroyed()&&i.push(e)}catch{}if(i.length===1)return i[0];let a=[];try{a=r.BrowserWindow.getAllWindows().filter(e=>e!=null&&!e.isDestroyed()&&!e.webContents.isDestroyed())}catch{return null}if(a.length!==1)return null;let o=a[0],s=n.get(o.id)??null;return s!=null&&!s.window.isDestroyed()&&!s.owner.isDestroyed()?s:e(o,o.webContents)}`;
+  const replacement = `${helper}function ${functionName}({ensureWindowState:${ensureWindowStateVar},windowId:${windowIdVar},windows:${windowsVar}}){let ${stateVar}=${windowsVar}.get(${windowIdVar})??null;if(${stateVar}==null){let ${browserWindowVar}=${electronVar}.BrowserWindow.fromId(${windowIdVar});${browserWindowVar}!=null&&!${browserWindowVar}.isDestroyed()&&!${browserWindowVar}.webContents.isDestroyed()&&(${stateVar}=${ensureWindowStateVar}(${browserWindowVar},${browserWindowVar}.webContents))}${stateVar}==null&&(${stateVar}=codexLinuxResolveLiveBrowserUseRouteWindow(${ensureWindowStateVar},${windowIdVar},${windowsVar},${electronVar}));return ${stateVar}==null||${stateVar}.window.isDestroyed()||${stateVar}.owner.isDestroyed()?(${loggerVar}().warning(\`IAB_LIFECYCLE route window is not live\`,{safe:{hasWindowState:${stateVar}!=null,ownerDestroyed:${stateVar}?.owner.isDestroyed()??null,windowDestroyed:${stateVar}?.window.isDestroyed()??null,windowId:${windowIdVar}},sensitive:{}}),null):${stateVar}}`;
+
+  return currentSource.replace(original, replacement);
+}
+
 function applyLinuxChromeExtensionStatusPatch(currentSource) {
   if (currentSource.includes("codexLinuxChromeProfileRoots")) {
     return currentSource;
@@ -1398,6 +1505,7 @@ function applyLinuxRemoteControlConfigPreservationPatch(currentSource) {
 
 module.exports = {
   applyBrowserUseNodeReplApprovalPatch,
+  applyLinuxBrowserUseRouteLivenessPatch,
   applyLinuxAboutDialogPatch,
   applyLinuxChromeExtensionStatusPatch,
   applyLinuxExplicitIpcQuitPatch,
@@ -1411,6 +1519,7 @@ module.exports = {
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxQuitGuardPatch,
   applyLinuxReadyToShowWindowStatePatch,
+  applyLinuxResizeRepaintPatch,
   applyLinuxRemoteControlConfigPreservationPatch,
   applyLinuxSetIconPatch,
   applyLinuxSingleInstancePatch,
