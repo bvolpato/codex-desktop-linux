@@ -1484,6 +1484,33 @@ test("Linux remote mobile hydration skips turn ids before reading threads", () =
   });
 });
 
+test("Linux remote mobile hydration uses captured turn id normalizer helper", () => {
+  const source = syntheticAppServerManagerSignalsBundle().replaceAll("I(", "J(");
+  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
+
+  assert.match(patched, /J\(l\)/);
+  assert.match(patched, /J\(u\)/);
+  assert.doesNotMatch(patched, /I\(l\)/);
+  assert.doesNotMatch(patched, /I\(u\)/);
+
+  const context = {
+    module: { exports: {} },
+    J: (value) => value,
+    z: { error() {}, warning() {} },
+  };
+  vm.runInNewContext(`${patched};module.exports=T;`, context);
+  const manager = new context.module.exports();
+  manager.conversations = new Map();
+  manager.readThread = () => {
+    throw new Error("readThread should not be called for ambiguous turn ids");
+  };
+
+  manager.onNotification("turn/started", {
+    threadId: "turn-a",
+    turn: { id: "turn-a" },
+  });
+});
+
 test("Linux remote mobile hydration uses nested real thread ids", async () => {
   const source = syntheticAppServerManagerSignalsBundle();
   const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
