@@ -3,11 +3,12 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use codex_record_replay_linux::{
-    bundle_draft_prompt, command_json, expire_session, mark_session, parse_timeline_line,
-    read_runtime_status, read_timeline, record_browser_trace, record_speech_context, start_session,
-    stop_session, update_active_status, validate_bundle_dir, validate_draft_prompt,
-    write_active_status, write_stopped_status, Commands, RecordCommand, RecordStartOptions,
-    RecordingBundleManifest, RecordingRuntimeState, SessionCancelArgs, TimelineEvent,
+    bundle_draft_prompt, cancel_session, command_json, expire_session, mark_session,
+    parse_timeline_line, read_runtime_status, read_timeline, record_browser_trace,
+    record_speech_context, start_session, stop_session, update_active_status, validate_bundle_dir,
+    validate_draft_prompt, write_active_status, write_stopped_status, Commands, RecordCommand,
+    RecordStartOptions, RecordingBundleManifest, RecordingRuntimeState, SessionCancelArgs,
+    TimelineEvent,
 };
 
 const MANIFEST_VALID_FIXTURE: &str = include_str!("fixtures/manifest_valid.json");
@@ -232,6 +233,38 @@ fn start_session_creates_private_bundle_and_status_files() {
 
 #[cfg(unix)]
 #[test]
+fn runtime_status_tightens_preexisting_private_directory() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = status_env_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let status_dir = temp.path().join("runtime");
+    fs::create_dir(&status_dir).unwrap();
+    fs::set_permissions(&status_dir, fs::Permissions::from_mode(0o777)).unwrap();
+    let status_path = status_dir.join("status.json");
+    let previous = std::env::var_os("CODEX_RECORD_REPLAY_STATUS_PATH");
+    std::env::set_var("CODEX_RECORD_REPLAY_STATUS_PATH", &status_path);
+
+    write_active_status(
+        &temp.path().join("bundle"),
+        Some("private runtime".to_string()),
+    )
+    .unwrap();
+
+    let mode = fs::metadata(&status_dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        mode, 0o700,
+        "preexisting status directory should be tightened"
+    );
+
+    match previous {
+        Some(path) => std::env::set_var("CODEX_RECORD_REPLAY_STATUS_PATH", path),
+        None => std::env::remove_var("CODEX_RECORD_REPLAY_STATUS_PATH"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn start_session_rejects_existing_or_symlink_session_dir() {
     use std::os::unix::fs as unix_fs;
 
@@ -400,6 +433,27 @@ fn status_command_persists_expired_session() {
 }
 
 #[test]
+fn stale_recording_lock_is_recovered_for_dead_pid() {
+    let _guard = status_env_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("bundle");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("timeline.jsonl"), "").unwrap();
+    let manifest =
+        RecordingBundleManifest::new("stale-lock".to_string(), "2026-06-28T12:00:00Z".to_string());
+    codex_record_replay_linux::manifest::write_manifest(&root, &manifest).unwrap();
+    fs::write(root.join(".recording.lock"), "999999999\n").unwrap();
+
+    let record = mark_session(&root, "after stale lock").unwrap();
+
+    assert!(matches!(record.event, TimelineEvent::UserMarker { .. }));
+    assert!(
+        !root.join(".recording.lock").exists(),
+        "lock file should be released after successful mark"
+    );
+}
+
+#[test]
 fn validate_bundle_rejects_duplicate_timeline_indexes() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
@@ -420,6 +474,110 @@ fn validate_bundle_rejects_duplicate_timeline_indexes() {
         !report.is_valid(),
         "duplicate timeline indexes must invalidate the bundle"
     );
+}
+
+#[test]
+fn explicit_stop_after_expiry_persists_max_duration_end_reason() {
+    let _guard = status_env_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("bundle");
+    fs::create_dir(&root).unwrap();
+    fs::write(
+        root.join("timeline.jsonl"),
+        "{\"index\":0,\"recorded_at\":\"2026-06-28T12:00:00Z\",\"kind\":\"session_started\",\"payload\":{}}\n",
+    )
+    .unwrap();
+    let manifest = RecordingBundleManifest::new(
+        "expired-before-stop".to_string(),
+        "2026-06-28T12:00:00Z".to_string(),
+    );
+    codex_record_replay_linux::manifest::write_manifest(&root, &manifest).unwrap();
+
+    let status_path = temp.path().join("status.json");
+    let previous = std::env::var_os("CODEX_RECORD_REPLAY_STATUS_PATH");
+    std::env::set_var("CODEX_RECORD_REPLAY_STATUS_PATH", &status_path);
+    fs::write(
+        &status_path,
+        serde_json::json!({
+            "ok": true,
+            "schema_version": 1,
+            "state": "active",
+            "session_dir": root,
+            "goal": null,
+            "started_at": "2026-06-28T12:00:00Z",
+            "updated_at": "2026-06-28T12:00:00Z",
+            "expires_at": "2026-06-28T12:00:01Z",
+            "max_duration_seconds": 1800,
+            "last_event": "start",
+            "status_path": status_path,
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let record = stop_session(&root).unwrap();
+
+    assert!(matches!(record.event, TimelineEvent::SessionExpired));
+    let manifest = codex_record_replay_linux::manifest::read_manifest(&root).unwrap();
+    assert_eq!(manifest.end_reason.as_deref(), Some("max_duration"));
+    assert_eq!(read_runtime_status().state, RecordingRuntimeState::Expired);
+
+    match previous {
+        Some(path) => std::env::set_var("CODEX_RECORD_REPLAY_STATUS_PATH", path),
+        None => std::env::remove_var("CODEX_RECORD_REPLAY_STATUS_PATH"),
+    }
+}
+
+#[test]
+fn explicit_cancel_after_expiry_persists_max_duration_end_reason() {
+    let _guard = status_env_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("bundle");
+    fs::create_dir(&root).unwrap();
+    fs::write(
+        root.join("timeline.jsonl"),
+        "{\"index\":0,\"recorded_at\":\"2026-06-28T12:00:00Z\",\"kind\":\"session_started\",\"payload\":{}}\n",
+    )
+    .unwrap();
+    let manifest = RecordingBundleManifest::new(
+        "expired-before-cancel".to_string(),
+        "2026-06-28T12:00:00Z".to_string(),
+    );
+    codex_record_replay_linux::manifest::write_manifest(&root, &manifest).unwrap();
+
+    let status_path = temp.path().join("status.json");
+    let previous = std::env::var_os("CODEX_RECORD_REPLAY_STATUS_PATH");
+    std::env::set_var("CODEX_RECORD_REPLAY_STATUS_PATH", &status_path);
+    fs::write(
+        &status_path,
+        serde_json::json!({
+            "ok": true,
+            "schema_version": 1,
+            "state": "active",
+            "session_dir": root,
+            "goal": null,
+            "started_at": "2026-06-28T12:00:00Z",
+            "updated_at": "2026-06-28T12:00:00Z",
+            "expires_at": "2026-06-28T12:00:01Z",
+            "max_duration_seconds": 1800,
+            "last_event": "start",
+            "status_path": status_path,
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let record = cancel_session(&root, true).unwrap();
+
+    assert!(matches!(record.event, TimelineEvent::SessionExpired));
+    let manifest = codex_record_replay_linux::manifest::read_manifest(&root).unwrap();
+    assert_eq!(manifest.end_reason.as_deref(), Some("max_duration"));
+    assert_eq!(read_runtime_status().state, RecordingRuntimeState::Expired);
+
+    match previous {
+        Some(path) => std::env::set_var("CODEX_RECORD_REPLAY_STATUS_PATH", path),
+        None => std::env::remove_var("CODEX_RECORD_REPLAY_STATUS_PATH"),
+    }
 }
 
 #[test]

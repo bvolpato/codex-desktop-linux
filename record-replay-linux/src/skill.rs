@@ -502,7 +502,18 @@ fn copy_as_executable(metadata: &fs::Metadata, path: &Path) -> bool {
     {
         return false;
     }
-    is_probably_executable(metadata, path)
+    source_has_execute_bits(metadata)
+}
+
+#[cfg(unix)]
+fn source_has_execute_bits(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn source_has_execute_bits(metadata: &fs::Metadata) -> bool {
+    !metadata.permissions().readonly()
 }
 
 fn home_dir() -> Option<PathBuf> {

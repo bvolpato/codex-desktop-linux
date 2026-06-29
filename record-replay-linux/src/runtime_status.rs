@@ -102,6 +102,12 @@ pub fn refresh_runtime_status() -> RecordingRuntimeStatus {
     status
 }
 
+pub(crate) fn expired_status_for(session_dir: &Path) -> bool {
+    let status = read_runtime_status();
+    status.session_dir.as_deref() == Some(session_dir)
+        && matches!(status.state, RecordingRuntimeState::Expired)
+}
+
 pub fn write_active_status(
     session_dir: &Path,
     goal: Option<String>,

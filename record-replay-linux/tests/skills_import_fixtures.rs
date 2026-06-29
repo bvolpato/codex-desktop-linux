@@ -237,3 +237,57 @@ fn copied_skill_modes_are_normalized() {
         & 0o777;
     assert_eq!(mode, 0o644);
 }
+
+#[cfg(unix)]
+#[test]
+fn copied_skill_script_modes_follow_source_execute_bits() {
+    let temp = tempfile::tempdir().unwrap();
+    let skill = temp.path().join("script-modes");
+    write_skill(
+        &skill,
+        "Script Modes",
+        "Use when testing imported script permissions.",
+        "Instruction-only skill.",
+    );
+    fs::create_dir(skill.join("scripts")).unwrap();
+    fs::write(
+        skill.join("scripts").join("passive.py"),
+        "print('passive')\n",
+    )
+    .unwrap();
+    fs::write(
+        skill.join("scripts").join("runner.sh"),
+        "#!/usr/bin/env bash\ntrue\n",
+    )
+    .unwrap();
+    fs::set_permissions(
+        skill.join("scripts").join("passive.py"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    fs::set_permissions(
+        skill.join("scripts").join("runner.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let target = temp.path().join("target");
+
+    let report = import_skill(SkillImportOptions {
+        dry_run: false,
+        ..import_options(&skill, &target)
+    })
+    .unwrap();
+
+    let passive_mode = fs::metadata(report.destination.join("scripts/passive.py"))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    let runner_mode = fs::metadata(report.destination.join("scripts/runner.sh"))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(passive_mode, 0o644);
+    assert_eq!(runner_mode, 0o755);
+}

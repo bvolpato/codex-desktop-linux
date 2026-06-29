@@ -230,6 +230,9 @@ pub fn record_browser_trace(
 }
 
 pub fn stop_session(bundle_dir: &Path) -> Result<crate::timeline::TimelineRecord> {
+    if crate::runtime_status::expired_status_for(bundle_dir) {
+        return expire_session(bundle_dir);
+    }
     finalize_session(
         bundle_dir,
         "recording_controls_stopped",
@@ -242,6 +245,9 @@ pub fn cancel_session(
     bundle_dir: &Path,
     discarded: bool,
 ) -> Result<crate::timeline::TimelineRecord> {
+    if crate::runtime_status::expired_status_for(bundle_dir) {
+        return expire_session(bundle_dir);
+    }
     let end_reason = if discarded {
         "recording_controls_canceled_discarded"
     } else {

@@ -9,7 +9,7 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 
 pub const PRIVATE_DIR_MODE: u32 = 0o700;
 pub const PRIVATE_FILE_MODE: u32 = 0o600;
@@ -89,8 +89,12 @@ pub fn create_new_private_dir(path: &Path) -> Result<()> {
 }
 
 pub fn write_private_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         create_private_dir_all(parent)?;
+        ensure_private_dir(parent)?;
     }
     let file_name = path
         .file_name()
@@ -126,8 +130,12 @@ pub fn write_private_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<()>
 }
 
 pub fn append_private_line(path: &Path, line: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         create_private_dir_all(parent)?;
+        ensure_private_dir(parent)?;
     }
     let mut file = private_open_options()
         .create(true)
@@ -153,9 +161,15 @@ pub fn lock_directory(dir: &Path, name: &str) -> Result<DirectoryLock> {
                 return Ok(DirectoryLock { path: lock_path });
             }
             Err(error) if error.kind() == ErrorKind::AlreadyExists && Instant::now() < deadline => {
+                if recover_stale_lock(&lock_path, false)? {
+                    continue;
+                }
                 thread::sleep(Duration::from_millis(5));
             }
             Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                if recover_stale_lock(&lock_path, true)? {
+                    continue;
+                }
                 bail!("timed out waiting for {}", lock_path.display());
             }
             Err(error) => {
@@ -166,6 +180,31 @@ pub fn lock_directory(dir: &Path, name: &str) -> Result<DirectoryLock> {
     }
 }
 
+fn ensure_private_dir(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to inspect {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        bail!("path component must not be a symlink: {}", path.display());
+    }
+    if !metadata.is_dir() {
+        bail!("path component is not a directory: {}", path.display());
+    }
+    #[cfg(unix)]
+    {
+        if metadata.uid() != effective_uid() {
+            bail!(
+                "private directory is not owned by current user: {}",
+                path.display()
+            );
+        }
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode != PRIVATE_DIR_MODE {
+            set_private_dir_mode(path)?;
+        }
+    }
+    Ok(())
+}
+
 fn create_private_dir(path: &Path) -> Result<()> {
     let mut builder = DirBuilder::new();
     #[cfg(unix)]
@@ -173,6 +212,49 @@ fn create_private_dir(path: &Path) -> Result<()> {
     builder.create(path)?;
     set_private_dir_mode(path)?;
     Ok(())
+}
+
+fn recover_stale_lock(path: &Path, recover_invalid: bool) -> Result<bool> {
+    let observed = fs::read_to_string(path).unwrap_or_default();
+    let pid = observed.trim().parse::<u32>().ok();
+    let stale = match pid {
+        Some(pid) => !pid_is_alive(pid),
+        None => recover_invalid,
+    };
+    if !stale {
+        return Ok(false);
+    }
+
+    if fs::read_to_string(path).unwrap_or_default() != observed {
+        return Ok(false);
+    }
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error).with_context(|| format!("failed to remove {}", path.display())),
+    }
+}
+
+fn pid_is_alive(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Path::new("/proc").join(pid.to_string()).exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
+
+#[cfg(unix)]
+fn effective_uid() -> u32 {
+    extern "C" {
+        fn geteuid() -> u32;
+    }
+    unsafe { geteuid() }
 }
 
 fn private_open_options() -> OpenOptions {
