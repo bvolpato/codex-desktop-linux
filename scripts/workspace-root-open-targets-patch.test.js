@@ -191,7 +191,7 @@ test("workspace root open targets patch is not applicable without Linux targets"
   }
 });
 
-test("workspace root open targets patch skips when Linux targets are enabled but the File Manager chunk is absent", () => {
+test("workspace root open targets patch reports optional drift when Linux targets are enabled but the File Manager chunk is absent", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-workspace-root-open-targets-"));
   try {
     const buildDir = path.join(root, ".vite", "build");
@@ -222,11 +222,11 @@ test("workspace root open targets patch skips when Linux targets are enabled but
     assert.deepEqual(result, {
       matched: 0,
       changed: 0,
-      status: "skipped-target",
+      status: "skipped-optional",
       reason: expectedReason,
     });
     assert.deepEqual(workspaceRootOpenTargetsPatch.status(result, []), {
-      status: "skipped-target",
+      status: "skipped-optional",
       reason: expectedReason,
     });
   } finally {

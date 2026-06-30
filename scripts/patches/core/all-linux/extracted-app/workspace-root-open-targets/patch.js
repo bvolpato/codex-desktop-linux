@@ -320,7 +320,7 @@ function patchWorkspaceRootOpenTargets(extractedDir) {
     return {
       matched,
       changed,
-      status: "skipped-target",
+      status: "skipped-optional",
       reason: MISSING_FILE_MANAGER_ACTION_REASON,
     };
   }
