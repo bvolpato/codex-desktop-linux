@@ -3829,7 +3829,7 @@ else
     log_phase "warm_start_ready"
 fi
 
-if [ -z "${CODEX_CLI_PATH:-}" ]; then
+if [ -z "${CODEX_CLI_PATH:-}" ] || [ "${CODEX_CLI_PATH:-}" = "warm-start-skip" ]; then
     CODEX_CLI_PATH="$(find_codex_cli || true)"
     export CODEX_CLI_PATH
     log_phase "cli_lookup"
