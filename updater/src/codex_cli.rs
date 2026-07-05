@@ -10,9 +10,10 @@ use semver::Version;
 use std::{
     ffi::{OsStr, OsString},
     fs,
+    io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 use tracing::{info, warn};
 
@@ -578,25 +579,38 @@ fn standalone_home_from_path(path: &Path) -> Option<PathBuf> {
 
 fn update_standalone_cli(install: &StandaloneCliInstall, latest_version: &str) -> Result<()> {
     let downloader = standalone_installer_downloader()?;
+    let installer_script = downloader.download_installer()?;
     let mut command = Command::new("sh");
     command
-        .arg("-c")
-        .arg(downloader.shell_script())
-        .env(
-            "PATH",
-            standalone_installer_path_env(install.install_dir.as_deref()),
-        )
+        .arg("-s")
+        .env("PATH", command_path_env())
         .env("CODEX_RELEASE", latest_version)
         .env("CODEX_NON_INTERACTIVE", "1")
-        .env("CODEX_HOME", &install.codex_home);
-
+        .env("CODEX_HOME", &install.codex_home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     if let Some(install_dir) = &install.install_dir {
         command.env("CODEX_INSTALL_DIR", install_dir);
     }
 
-    let output = command
-        .output()
+    let mut child = command
+        .spawn()
         .with_context(|| "Failed to spawn standalone Codex CLI installer")?;
+
+    {
+        let mut stdin = child
+            .stdin
+            .take()
+            .context("Failed to open standalone Codex CLI installer stdin")?;
+        stdin
+            .write_all(&installer_script)
+            .with_context(|| "Failed to write standalone Codex CLI installer script")?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .with_context(|| "Failed to wait for standalone Codex CLI installer")?;
 
     anyhow::ensure!(
         output.status.success(),
@@ -609,30 +623,61 @@ fn update_standalone_cli(install: &StandaloneCliInstall, latest_version: &str) -
 }
 
 enum StandaloneInstallerDownloader {
-    Curl,
-    Wget,
+    Curl(PathBuf),
+    Wget(PathBuf),
 }
 
 impl StandaloneInstallerDownloader {
-    fn shell_script(&self) -> String {
-        let download_command = match self {
-            Self::Curl => format!("curl -fsSL {STANDALONE_INSTALLER_URL} -o \"$script\""),
-            Self::Wget => format!("wget -q -O \"$script\" {STANDALONE_INSTALLER_URL}"),
+    fn download_installer(&self) -> Result<Vec<u8>> {
+        let output = match self {
+            Self::Curl(program) => Command::new(program)
+                .env("PATH", command_path_env())
+                .args(["-fsSL", STANDALONE_INSTALLER_URL])
+                .output()
+                .with_context(|| {
+                    format!(
+                        "Failed to spawn standalone Codex CLI installer downloader {}",
+                        program.display()
+                    )
+                })?,
+            Self::Wget(program) => Command::new(program)
+                .env("PATH", command_path_env())
+                .args(["-q", "-O", "-", STANDALONE_INSTALLER_URL])
+                .output()
+                .with_context(|| {
+                    format!(
+                        "Failed to spawn standalone Codex CLI installer downloader {}",
+                        program.display()
+                    )
+                })?,
         };
 
-        format!(
-            "set -eu\nscript=\"$(mktemp)\"\ntrap 'rm -f \"$script\"' EXIT\n{download_command}\nsh \"$script\""
-        )
+        anyhow::ensure!(
+            output.status.success(),
+            "standalone Codex CLI installer download failed with {}{}",
+            output.status,
+            format_command_output(&output)
+        );
+        anyhow::ensure!(
+            !output.stdout.is_empty(),
+            "standalone Codex CLI installer download returned an empty script"
+        );
+
+        Ok(output.stdout)
     }
 }
 
 fn standalone_installer_downloader() -> Result<StandaloneInstallerDownloader> {
     let path_env = command_path_env();
-    if find_in_path("curl", &path_env).is_some() {
-        return Ok(StandaloneInstallerDownloader::Curl);
+    if let Some(path) = find_in_path("curl", &path_env) {
+        return Ok(StandaloneInstallerDownloader::Curl(resolved_program_path(
+            path,
+        )));
     }
-    if find_in_path("wget", &path_env).is_some() {
-        return Ok(StandaloneInstallerDownloader::Wget);
+    if let Some(path) = find_in_path("wget", &path_env) {
+        return Ok(StandaloneInstallerDownloader::Wget(resolved_program_path(
+            path,
+        )));
     }
 
     anyhow::bail!(
@@ -640,16 +685,8 @@ fn standalone_installer_downloader() -> Result<StandaloneInstallerDownloader> {
     );
 }
 
-fn standalone_installer_path_env(install_dir: Option<&Path>) -> OsString {
-    let base_path = command_path_env();
-    let Some(install_dir) = install_dir else {
-        return base_path;
-    };
-
-    let mut entries = Vec::new();
-    entries.push(install_dir.to_path_buf());
-    entries.extend(std::env::split_paths(&base_path));
-    std::env::join_paths(entries).unwrap_or(base_path)
+fn resolved_program_path(path: PathBuf) -> PathBuf {
+    fs::canonicalize(&path).unwrap_or(path)
 }
 
 fn install_latest_cli(latest_version: &str) -> Result<()> {
@@ -1014,18 +1051,8 @@ mod tests {
         write_executable_script(
             &tool_bin.join("curl"),
             r#"#!/bin/sh
-output=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o)
-      output="$2"
-      shift
-      ;;
-  esac
-  shift
-done
-if [ -n "$output" ]; then
-  cat > "$output" <<'SCRIPT'
+if [ "$1" = "-fsSL" ]; then
+  cat <<'SCRIPT'
 #!/bin/sh
 set -eu
 release_dir="$CODEX_HOME/packages/standalone/releases/$CODEX_RELEASE-test-target"
@@ -1053,7 +1080,17 @@ exit 1
         write_executable_script(
             &tool_bin.join("curl"),
             &format!(
-                "#!/bin/sh\noutput=\"\"\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    -o)\n      output=\"$2\"\n      shift\n      ;;\n  esac\n  shift\ndone\nif [ -n \"$output\" ]; then\n  echo curl-called >> \"{}\"\n  printf '%s\\n' '#!/bin/sh' 'exit 77' > \"$output\"\n  exit 0\nfi\nexit 1\n",
+                "#!/bin/sh\nif [ \"$1\" = \"-fsSL\" ]; then\n  echo curl-called >> \"{}\"\n  printf '%s\\n' '#!/bin/sh' 'exit 77'\n  exit 0\nfi\nexit 1\n",
+                call_log.display()
+            ),
+        )
+    }
+
+    fn write_broken_install_dir_curl(install_dir: &Path, call_log: &Path) -> Result<()> {
+        write_executable_script(
+            &install_dir.join("curl"),
+            &format!(
+                "#!/bin/sh\necho install-dir-curl-called >> \"{}\"\nexit 99\n",
                 call_log.display()
             ),
         )
@@ -1405,8 +1442,10 @@ exit 1
             write_standalone_codex_release(&codex_home, "0.42.0", "x86_64-unknown-linux-musl")?;
         let visible_codex = link_standalone_cli(&codex_home, &install_dir, &initial_release)?;
         let npm_install_log = temp.path().join("npm-install.log");
+        let install_dir_curl_log = temp.path().join("install-dir-curl.log");
         write_fake_latest_npm(&tool_bin, "0.42.1", &npm_install_log)?;
         write_fake_standalone_installer_curl(&tool_bin)?;
+        write_broken_install_dir_curl(&install_dir, &install_dir_curl_log)?;
 
         let _restore_env = EnvRestoreGuard::capture(&[
             "HOME",
@@ -1441,6 +1480,7 @@ exit 1
         assert_eq!(state.cli_status, CliStatus::UpToDate);
         assert_eq!(read_installed_version(&outcome.cli_path)?, "0.42.1");
         assert!(!npm_install_log.exists());
+        assert!(!install_dir_curl_log.exists());
         Ok(())
     }
 
