@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const {
+  escapeRegExp,
   requireName,
 } = require("../../lib/minified-js.js");
 
@@ -26,9 +27,10 @@ function applyLinuxBundledPluginReconcileStaleSnapshotPatch(currentSource) {
   }
 
   const featureSnapshotVar = match[4];
+  const escapedFeatureSnapshotVar = escapeRegExp(featureSnapshotVar);
   const reconcilerPrefix = currentSource.slice(match.index);
   const snapshotMatch = reconcilerPrefix.match(
-    new RegExp(`;let ([A-Za-z_$][\\w$]*)=${featureSnapshotVar}(?:,|;)`),
+    new RegExp(`;let ([A-Za-z_$][\\w$]*)=${escapedFeatureSnapshotVar}(?:,|;)`),
   );
   const reconcileLogIndex = reconcilerPrefix.indexOf(
     "bundled_plugins_reconcile_started",
@@ -43,7 +45,7 @@ function applyLinuxBundledPluginReconcileStaleSnapshotPatch(currentSource) {
   const capturedSnapshotVar = snapshotMatch[1];
   const hashMatch = reconcilerPrefix.match(
     new RegExp(
-      `;if\\(!${match[2]}&&([A-Za-z_$][\\w$]*)===([A-Za-z_$][\\w$]*)\\)return`,
+      `;if\\(!${escapeRegExp(match[2])}&&([A-Za-z_$][\\w$]*)===([A-Za-z_$][\\w$]*)\\)return`,
     ),
   );
   if (hashMatch == null) {
@@ -57,7 +59,7 @@ function applyLinuxBundledPluginReconcileStaleSnapshotPatch(currentSource) {
   const capturedHashVar = hashMatch[2];
   const reconcileCallMatch = reconcilerPrefix.match(
     new RegExp(
-      `await ([A-Za-z_$][\\w$]*)\\(\\{desktopFeatureAvailability:${capturedSnapshotVar},`,
+      `await ([A-Za-z_$][\\w$]*)\\(\\{desktopFeatureAvailability:${escapeRegExp(capturedSnapshotVar)},`,
     ),
   );
   if (reconcileCallMatch == null) {
@@ -69,7 +71,7 @@ function applyLinuxBundledPluginReconcileStaleSnapshotPatch(currentSource) {
 
   const reconcileWorkerVar = reconcileCallMatch[1];
   const workerDefinitionRegex = new RegExp(
-    `${reconcileWorkerVar}=async ([A-Za-z_$][\\w$]*)=>\\{`,
+    `${escapeRegExp(reconcileWorkerVar)}=async ([A-Za-z_$][\\w$]*)=>\\{`,
     "g",
   );
   const workerDefinitionMatches = [...reconcilerPrefix.matchAll(workerDefinitionRegex)];

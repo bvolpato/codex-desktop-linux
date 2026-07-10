@@ -6137,16 +6137,26 @@ test("auto-installs the current Chrome plugin gate shape", () => {
   assert.equal((patched.match(/installWhenMissing:!0,name:o\.s/g) || []).length, 0);
 });
 
-function bundledPluginReconcileRaceFixture() {
+function bundledPluginReconcileRaceFixture({
+  capturedHashVar = "c",
+  capturedSnapshotVar = "n",
+  featureStateVar = "p",
+  forceVar = "e",
+  latestHashVar = "h",
+  pendingVar = "v",
+  reasonVar = "t",
+  workerArgVar = "t",
+  workerVar = "j",
+} = {}) {
   return [
-    "let p=null,v=Promise.resolve(),h=null,calls=[],releasePreflight,preflightCount=0,markPreflightStarted;",
+    `let ${featureStateVar}=null,${pendingVar}=Promise.resolve(),${latestHashVar}=null,calls=[],releasePreflight,preflightCount=0,markPreflightStarted;`,
     "let preflightStarted=new Promise(e=>{markPreflightStarted=e});",
     "let L=()=>({info(){}});",
     "let preflight=()=>++preflightCount===1?(markPreflightStarted(),new Promise(e=>{releasePreflight=e})):Promise.resolve();",
     "let destructive=async({appServerConnection:e,desktopFeatureAvailability:t})=>{calls.push(t);return {}};",
-    "let E=({force:e,reason:t})=>{if(p==null)return L().info(`bundled_plugins_reconcile_skipped_features_unavailable`,{safe:{reason:t},sensitive:{}}),v;let n=p,c=JSON.stringify({inAppBrowserUse:n.inAppBrowserUse});if(!e&&h===c)return v;h=c;return v=v.catch(()=>{}).then(async()=>{L().info(`bundled_plugins_reconcile_started`,{safe:{reason:t},sensitive:{}});await j({desktopFeatureAvailability:n,reason:t})}),v};",
-    "let j=async t=>{await preflight();let v=async()=>{},y,h=`shadowed-worker-local`;try{y=await destructive({appServerConnection:null,desktopFeatureAvailability:t.desktopFeatureAvailability})}finally{await v()}};",
-    "function setFeatures(e){p=e;return E({force:!1,reason:`startup`})}",
+    `let E=({force:${forceVar},reason:${reasonVar}})=>{if(${featureStateVar}==null)return L().info(\`bundled_plugins_reconcile_skipped_features_unavailable\`,{safe:{reason:${reasonVar}},sensitive:{}}),${pendingVar};let ${capturedSnapshotVar}=${featureStateVar},${capturedHashVar}=JSON.stringify({externalBrowserUse:${capturedSnapshotVar}.externalBrowserUse,inAppBrowserUse:${capturedSnapshotVar}.inAppBrowserUse});if(!${forceVar}&&${latestHashVar}===${capturedHashVar})return ${pendingVar};${latestHashVar}=${capturedHashVar};return ${pendingVar}=${pendingVar}.catch(()=>{}).then(async()=>{L().info(\`bundled_plugins_reconcile_started\`,{safe:{reason:${reasonVar}},sensitive:{}});await ${workerVar}({desktopFeatureAvailability:${capturedSnapshotVar},reason:${reasonVar}})}),${pendingVar}};`,
+    `let ${workerVar}=async ${workerArgVar}=>{await preflight();let v=async()=>{},y,h=\`shadowed-worker-local\`;try{y=await destructive({appServerConnection:null,desktopFeatureAvailability:${workerArgVar}.desktopFeatureAvailability})}finally{await v()}};`,
+    `function setFeatures(e){${featureStateVar}=e;return E({force:!1,reason:\`startup\`})}`,
     "function getCalls(){return calls}",
     "function release(){releasePreflight()}",
     "function waitForPreflight(){return preflightStarted}",
@@ -6171,13 +6181,18 @@ test("skips a queued bundled plugin reconcile that captured a stale feature snap
     bundledPluginReconcileRaceFixture(),
   );
 
-  api.setFeatures({ inAppBrowserUse: false });
+  api.setFeatures({ externalBrowserUse: false, inAppBrowserUse: false });
   await api.waitForPreflight();
-  const latestReconcile = api.setFeatures({ inAppBrowserUse: true });
+  const latestReconcile = api.setFeatures({
+    externalBrowserUse: true,
+    inAppBrowserUse: true,
+  });
   api.release();
   await latestReconcile;
 
-  assert.deepEqual(api.getCalls(), [{ inAppBrowserUse: true }]);
+  assert.deepEqual(api.getCalls(), [
+    { externalBrowserUse: true, inAppBrowserUse: true },
+  ]);
   assert.equal(
     (patched.match(/codex-linux-skip-stale-bundled-plugin-reconcile/g) || []).length,
     1,
@@ -6189,12 +6204,50 @@ test("reconciles an authoritative disabled bundled plugin snapshot", async () =>
     bundledPluginReconcileRaceFixture(),
   );
 
-  const reconcile = api.setFeatures({ inAppBrowserUse: false });
+  const reconcile = api.setFeatures({
+    externalBrowserUse: false,
+    inAppBrowserUse: false,
+  });
   await api.waitForPreflight();
   api.release();
   await reconcile;
 
-  assert.deepEqual(api.getCalls(), [{ inAppBrowserUse: false }]);
+  assert.deepEqual(api.getCalls(), [
+    { externalBrowserUse: false, inAppBrowserUse: false },
+  ]);
+});
+
+test("escapes dollar-prefixed bundled plugin reconcile identifiers", async () => {
+  const { api, patched } = bundledPluginReconcileRaceApi(
+    bundledPluginReconcileRaceFixture({
+      capturedHashVar: "$c",
+      capturedSnapshotVar: "$n",
+      featureStateVar: "$p",
+      forceVar: "$force",
+      latestHashVar: "$h",
+      pendingVar: "$v",
+      reasonVar: "$reason",
+      workerArgVar: "$t",
+      workerVar: "$j",
+    }),
+  );
+
+  api.setFeatures({ externalBrowserUse: false, inAppBrowserUse: false });
+  await api.waitForPreflight();
+  const latestReconcile = api.setFeatures({
+    externalBrowserUse: true,
+    inAppBrowserUse: true,
+  });
+  api.release();
+  await latestReconcile;
+
+  assert.deepEqual(api.getCalls(), [
+    { externalBrowserUse: true, inAppBrowserUse: true },
+  ]);
+  assert.equal(
+    (patched.match(/codex-linux-skip-stale-bundled-plugin-reconcile/g) || []).length,
+    1,
+  );
 });
 
 test("fails closed when the bundled plugin reconcile worker is ambiguous", () => {
