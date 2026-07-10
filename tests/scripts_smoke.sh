@@ -5254,8 +5254,8 @@ for marker in (
 ):
     if f'log_phase "{marker}"' not in source:
         raise SystemExit(f"launcher must log phase marker {marker}")
-if 'if [ -z "${CODEX_CLI_PATH:-}" ]; then' not in runtime_body:
-    raise SystemExit("launcher must run the cheap CLI lookup even for second-instance fallback")
+if 'if [ -z "${CODEX_CLI_PATH:-}" ] || [ "${CODEX_CLI_PATH:-}" = "warm-start-skip" ]; then' not in runtime_body:
+    raise SystemExit("launcher must resolve the CLI path for second-instance fallback and warm-start sentinel values")
 if 'if needs_cold_start && [ -z "$CODEX_CLI_PATH" ]; then' not in runtime_body:
     raise SystemExit("second-instance handoff must skip missing-CLI failure")
 if '"$HOME/.bun/bin/codex"' not in source:
