@@ -404,15 +404,19 @@ test("Linux settings search hides controls that cannot render", () => {
   );
   assert.match(
     patched,
-    /let codexLinuxSuggestedPromptsEnabled=codexLinuxSuggestedPromptsSearchEnabled\(\);/,
-  );
-  assert.doesNotMatch(
-    patched,
-    /let codexLinuxSuggestedPromptsEnabled=l\(`2425897452`\);/,
+    /T2 as codexLinuxAccountInfoQuery,j7 as codexLinuxSuggestedPromptsEligible,qk as codexLinuxUseAuthSession/,
   );
   assert.match(
     patched,
-    /return m\.map\(e=>codexLinuxFilterSettingsSearchSection\(e,o,codexLinuxSuggestedPromptsEnabled\)\)/,
+    /let codexLinuxSuggestedPromptsVisible=codexLinuxSuggestedPromptsSearchVisible\(e\.enabled\);/,
+  );
+  assert.doesNotMatch(
+    patched,
+    /let codexLinuxSuggestedPromptsVisible=l\(`2425897452`\);/,
+  );
+  assert.match(
+    patched,
+    /return m\.map\(e=>codexLinuxFilterSettingsSearchSection\(e,o,codexLinuxSuggestedPromptsVisible\)\)/,
   );
   assert.equal(
     (patched.match(/function codexLinuxFilterSettingsSearchSection\(/g) || []).length,
@@ -423,9 +427,30 @@ test("Linux settings search hides controls that cannot render", () => {
     "var codexLinuxDarwinOnlySettingsSearchMessageIds",
   );
   const helperEnd = patched.indexOf("function qn", helperStart);
-  const context = {};
+  const context = {
+    accountData: null,
+    authSnapshot: {
+      authMethod: "chatgpt",
+      email: "fallback@example.com",
+      planAtLogin: "free",
+    },
+    eligibilityCalls: [],
+    gateEnabled: false,
+    isEligible: false,
+    l: () => context.gateEnabled,
+    queryCalls: [],
+    codexLinuxAccountInfoQuery: (key, config) => {
+      context.queryCalls.push({ key, config });
+      return { data: context.accountData };
+    },
+    codexLinuxSuggestedPromptsEligible: (input) => {
+      context.eligibilityCalls.push(input);
+      return context.isEligible;
+    },
+    codexLinuxUseAuthSession: () => context.authSnapshot,
+  };
   vm.runInNewContext(
-    `${patched.slice(helperStart, helperEnd)};globalThis.filter=codexLinuxFilterSettingsSearchSection`,
+    `${patched.slice(helperStart, helperEnd)};globalThis.filter=codexLinuxFilterSettingsSearchSection;globalThis.suggestedPromptsVisible=codexLinuxSuggestedPromptsSearchVisible`,
     context,
   );
   const dockMessage = {
@@ -462,20 +487,47 @@ test("Linux settings search hides controls that cannot render", () => {
     }, false, false).messages, (message) => message.id),
     [permissionsMessage.id],
   );
-  assert.deepEqual(
+  const filterSuggestedPromptIds = (sectionSlug) =>
     Array.from(context.filter({
-      sectionSlug: "agent",
+      sectionSlug,
       messages: [suggestedPromptMessage, permissionsMessage],
-    }, false, true).messages, (message) => message.id),
-    [suggestedPromptMessage.id, permissionsMessage.id],
-  );
-  assert.deepEqual(
-    Array.from(context.filter({
-      sectionSlug: "general-settings",
-      messages: [suggestedPromptMessage, permissionsMessage],
-    }, false, true).messages, (message) => message.id),
-    [permissionsMessage.id],
-  );
+    }, false, context.suggestedPromptsVisible(true)).messages, (message) => message.id);
+
+  context.gateEnabled = true;
+  context.isEligible = true;
+  assert.equal(context.suggestedPromptsVisible(false), false);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.queryCalls.at(-1).config)), {
+    queryConfig: {
+      enabled: false,
+    },
+  });
+
+  context.gateEnabled = false;
+  context.isEligible = true;
+  assert.equal(context.suggestedPromptsVisible(true), false);
+  assert.deepEqual(filterSuggestedPromptIds("general-settings"), [permissionsMessage.id]);
+
+  context.gateEnabled = true;
+  context.isEligible = true;
+  context.accountData = {
+    email: "account@example.com",
+    plan: "pro",
+  };
+  assert.equal(context.suggestedPromptsVisible(true), true);
+  assert.deepEqual(filterSuggestedPromptIds("general-settings"), [
+    suggestedPromptMessage.id,
+    permissionsMessage.id,
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.eligibilityCalls.at(-1))), {
+    authMethod: "chatgpt",
+    email: "account@example.com",
+    plan: "pro",
+  });
+
+  context.gateEnabled = true;
+  context.isEligible = false;
+  assert.equal(context.suggestedPromptsVisible(true), false);
+  assert.deepEqual(filterSuggestedPromptIds("general-settings"), [permissionsMessage.id]);
 });
 
 test("Linux settings search visibility patch warns on current-bundle drift", () => {
