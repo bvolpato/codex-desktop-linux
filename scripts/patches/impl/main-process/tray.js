@@ -215,6 +215,8 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
     "trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(";
   const trayContextMethodPatch =
     `trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};setLinuxTrayContextMenu(){let e=${electronVar}.Menu.buildFromTemplate(this.getNativeTrayMenuItems());this.tray.setContextMenu?.(e);return e}constructor(`;
+  const trayControllerClassPrefix =
+    "nativeTrayClickSuppressionReason=null;clearNativeTrayClickSuppressionTimeout=null;chronicleTrayIconRefreshInterval=null;chronicleTrayIconState=`default`;isNativeTrayMenuOpen=!1;trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};";
   const trayRecoveryHelpers =
     `let codexLinuxTrayController=null,codexLinuxTrayRecoveryRegistered=!1,codexLinuxTrayRecoveryHandler=()=>{let e=codexLinuxTrayController;e?.setLinuxTrayContextMenu?.()},codexLinuxStopTrayRecovery=()=>{codexLinuxTrayRecoveryRegistered&&(${electronVar}.powerMonitor.removeListener?.(\`unlock-screen\`,codexLinuxTrayRecoveryHandler),${electronVar}.powerMonitor.removeListener?.(\`resume\`,codexLinuxTrayRecoveryHandler),${electronVar}.app.removeListener?.(\`will-quit\`,codexLinuxTrayQuitHandler),codexLinuxTrayRecoveryRegistered=!1),codexLinuxTrayController=null},codexLinuxTrayQuitHandler=()=>{codexLinuxStopTrayRecovery()},codexLinuxStartTrayRecovery=()=>{codexLinuxTrayRecoveryRegistered||(${electronVar}.powerMonitor.on(\`unlock-screen\`,codexLinuxTrayRecoveryHandler),${electronVar}.powerMonitor.on(\`resume\`,codexLinuxTrayRecoveryHandler),${electronVar}.app.once(\`will-quit\`,codexLinuxTrayQuitHandler),codexLinuxTrayRecoveryRegistered=!0)},codexLinuxSetTrayController=e=>(codexLinuxTrayController=e,codexLinuxStartTrayRecovery(),e);`;
   if (patchedSource.includes("setLinuxTrayContextMenu(){")) {
@@ -231,7 +233,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   const canSetLinuxTrayContextMenu = patchedSource.includes("setLinuxTrayContextMenu(){");
   if (!patchedSource.includes("codexLinuxTrayRecoveryHandler=")) {
     const trayControllerClassMatch = patchedSource.match(
-      new RegExp(`var [A-Za-z_$][\\w$]*=class\\{${escapeRegExp(trayContextMethodNeedle.split("constructor(")[0])}`),
+      new RegExp(`var [A-Za-z_$][\\w$]*=class\\{${escapeRegExp(trayControllerClassPrefix)}`),
     );
     if (trayControllerClassMatch != null && trayControllerClassMatch.index != null) {
       patchedSource =
