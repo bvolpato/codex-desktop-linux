@@ -1265,6 +1265,7 @@ module.exports = {
   applyLinuxDesktopSettingsRoutePatch,
   applyLinuxDesktopSettingsSectionsPatch,
   applyLinuxDesktopSettingsSharedPatch,
+  applyLinuxBrowserReloadShortcutRuntimePatch,
   applyLinuxKeybindOverridesRuntimePatch,
   applyLinuxShortcutPhysicalKeyFallbackPatch,
   keybindsSettingsAsset,
