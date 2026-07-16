@@ -46,9 +46,15 @@ run_node_tests() {
         node_test_args+=(--test-reporter=spec)
     fi
 
-    case "$NODE_TEST_TIMEOUT_SECONDS:$NODE_TEST_KILL_AFTER_SECONDS" in
-        *[!0-9:]*|0:*|*:0)
-            echo "NODE_TEST_TIMEOUT_SECONDS and NODE_TEST_KILL_AFTER_SECONDS must be positive integers" >&2
+    case "$NODE_TEST_TIMEOUT_SECONDS" in
+        *[!0-9]*|0)
+            echo "NODE_TEST_TIMEOUT_SECONDS must be a positive integer" >&2
+            return 2
+            ;;
+    esac
+    case "$NODE_TEST_KILL_AFTER_SECONDS" in
+        *[!0-9]*|0)
+            echo "NODE_TEST_KILL_AFTER_SECONDS must be a positive integer" >&2
             return 2
             ;;
     esac
@@ -73,7 +79,7 @@ run_node_tests() {
     fi
 
     if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
-        echo "Node test suite exceeded ${NODE_TEST_TIMEOUT_SECONDS}s; terminated to prevent a hung CI job" >&2
+        echo "Node test suite exited with status $status under the ${NODE_TEST_TIMEOUT_SECONDS}s watchdog; inspect the preceding output for a timeout or signal" >&2
     fi
     return "$status"
 }
