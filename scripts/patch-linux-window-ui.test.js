@@ -1110,13 +1110,13 @@ test("window controls safe-area descriptor matches current app shell chunks", ()
   assert.ok(descriptor);
   assert.equal(
     descriptor.pattern.test(
-      "app-initial~app-main~appgen-settings-page~settings-page~skills-settings~plugins-settings~re~old.js",
+      "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~legacy.js",
     ),
     false,
   );
   assert.equal(
     descriptor.pattern.test(
-      "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~iufn7mg3-current.js",
+      "app-initial~avatarOverlayCompositionSurface~artifact-tab-content.electron~app-main~appgen-s~j5d6n91g-DVu-pwEX.js",
     ),
     true,
   );
@@ -1151,9 +1151,13 @@ test("optional webview descriptors follow the current upstream chunk split", () 
   assert.ok(tooltipCollision);
   assert.equal(
     tooltipCollision.pattern.test(
-      "app-initial~app-main~hotkey-window-new-thread-page~hotkey-window-home-page~composer-utility-bar-D9zyQF1n.js",
+      "app-initial~avatarOverlayCompositionSurface~artifact-tab-content.electron~notebook-preview-~kr7rxhqe-BaAm4SxE.js",
     ),
     true,
+  );
+  assert.equal(
+    tooltipCollision.pattern.test("composer-utility-bar-Cpb8DT_h.js"),
+    false,
   );
   assert.equal(
     tooltipCollision.pattern.test(
@@ -2785,6 +2789,7 @@ test("adds a right-side safe area for Linux window controls in application menu 
   const source = [
     "var l=Object.freeze({default:Object.freeze({left:0,right:0}),mac:Object.freeze({legacy:Object.freeze({left:66+c,right:0}),modern:Object.freeze({left:76+c,right:0})}),applicationMenu:Object.freeze({left:0,right:0})});",
     "var m=Object.freeze({applicationMenu:Object.freeze({left:0,right:0})});",
+    "function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"ps-[max(var(--spacing-token-safe-header-left),0.5rem)]\":n===`start`,\"pe-2\":n===`start`&&i||n===`end`}),s=vr(e=>{let{width:n}=sr(e);t.set(n)});return jsx(o)}",
   ].join("");
 
   const patched = applyPatchTwice(applyLinuxWindowControlsSafeAreaPatch, source);
@@ -2797,12 +2802,18 @@ test("adds a right-side safe area for Linux window controls in application menu 
     patched,
     /applicationMenu:Object\.freeze\(\{left:0,right:0\}\)/,
   );
+  assert.match(
+    patched,
+    /"pe-2":n===`start`&&i,"pe-\(--spacing-token-safe-header-right\)":n===`end`/,
+  );
+  assert.doesNotMatch(patched, /"pe-2":n===`start`&&i\|\|n===`end`/);
 });
 
 test("patches remaining Linux window controls safe areas when another copy is already patched", () => {
   const source = [
     "var l=Object.freeze({applicationMenu:Object.freeze({left:0,right:138})});",
     "var m=Object.freeze({applicationMenu:Object.freeze({left:0,right:0})});",
+    "function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"ps-[max(var(--spacing-token-safe-header-left),0.5rem)]\":n===`start`,\"pe-2\":n===`start`&&i||n===`end`}),s=vr(e=>{let{width:n}=sr(e);t.set(n)});return jsx(o)}",
   ].join("");
 
   const patched = applyPatchTwice(applyLinuxWindowControlsSafeAreaPatch, source);
@@ -2815,6 +2826,23 @@ test("patches remaining Linux window controls safe areas when another copy is al
     patched,
     /applicationMenu:Object\.freeze\(\{left:0,right:0\}\)/,
   );
+  assert.match(
+    patched,
+    /"pe-2":n===`start`&&i,"pe-\(--spacing-token-safe-header-right\)":n===`end`/,
+  );
+});
+
+test("patches remaining Linux header safe-area padding when the menu inset is already patched", () => {
+  const source =
+    "var l=Object.freeze({applicationMenu:Object.freeze({left:0,right:138})});function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"ps-[max(var(--spacing-token-safe-header-left),0.5rem)]\":n===`start`,\"pe-2\":n===`start`&&i||n===`end`}),s=vr(e=>{let{width:n}=sr(e);t.set(n)});return jsx(o)}";
+
+  const patched = applyPatchTwice(applyLinuxWindowControlsSafeAreaPatch, source);
+
+  assert.match(
+    patched,
+    /"pe-2":n===`start`&&i,"pe-\(--spacing-token-safe-header-right\)":n===`end`/,
+  );
+  assert.doesNotMatch(patched, /"pe-2":n===`start`&&i\|\|n===`end`/);
 });
 
 test("keeps tooltips out of the Linux window controls titlebar area", () => {
