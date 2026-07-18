@@ -30,7 +30,13 @@ fi
 
 desktop_source="${CODEX_LINUX_DESKTOP_FILE_SOURCE:-}"
 if [ -z "$desktop_source" ]; then
-    for candidate in "/usr/share/applications/$app_id.desktop" "/usr/local/share/applications/$app_id.desktop" "${BAMF_DESKTOP_FILE_HINT:-}"; do
+    data_dirs="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+    IFS=: read -r -a data_dirs_array <<< "$data_dirs"
+    candidates=("${BAMF_DESKTOP_FILE_HINT:-}")
+    for data_dir in "${data_dirs_array[@]}"; do
+        [ -n "$data_dir" ] && candidates+=("$data_dir/applications/$app_id.desktop")
+    done
+    for candidate in "${candidates[@]}"; do
         if [ -n "$candidate" ] && [ "$candidate" != "$desktop_target" ] && [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
             desktop_source="$candidate"
             break

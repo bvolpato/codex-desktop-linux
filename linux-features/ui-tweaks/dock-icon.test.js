@@ -14,10 +14,14 @@ const {
 const { patchAssetFiles } = require("../../scripts/patches/lib/assets.js");
 const {
   applyDockIconMainPatch,
+  applyDockIconSearchPatch,
   applyDockIconSettingsPatch,
   descriptors,
   dockIconEnabled,
 } = require("./patches/dock-icon.js");
+const {
+  applyLinuxSettingsSearchVisibilityPatch,
+} = require("../../scripts/patches/impl/webview/index.js");
 
 const currentAppInfoSource = [
   "function fv(e,t,r){return`icon-chatgpt`}",
@@ -29,9 +33,9 @@ const currentAppInfoSource = [
 const currentRuntimeSource = [
   "function Xie({appBrand:e,buildFlavor:r,settingsStore:p,repoRoot:_,isMacOS:v,onWindowRegistered:C,disposables:w}){",
   "let T=(0,d.join)(_,`electron`,`src`,`icons`),E=e=>{if(!c.app.isPackaged)return null;let t=(0,d.join)(process.resourcesPath,e);return(0,h.existsSync)(t)?t:null},",
-  "D=e=>null,O=e=>E(e)??D(e),k=()=>p.get(n.sc.DOCK_ICON_PREFERENCE)??`app-default`,",
+  "D=e=>null,O=e=>E(e)??D(e),k=()=>p.get(n.cc.DOCK_ICON_PREFERENCE)??`app-default`,",
   "A=()=>O(`${fv(r,e)}.png`),j=pv(r),M=()=>c.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?j.dark:j.light,",
-  "N=t=>{if(t===`app-default`&&r!==i.a.Dev&&(c.app.isPackaged||e===n.nl.ChatGPT)){let e=c.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let a=t===`codex-system`?M():null,o=(a==null?null:O(a))??A(),s=o==null?c.nativeImage.createEmpty():c.nativeImage.createFromPath(o);s.isEmpty()||c.app.dock?.setIcon(s)},",
+  "N=t=>{if(t===`app-default`&&r!==i.a.Dev&&(c.app.isPackaged||e===n.rl.ChatGPT)){let e=c.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let a=t===`codex-system`?M():null,o=(a==null?null:O(a))??A(),s=o==null?c.nativeImage.createEmpty():c.nativeImage.createFromPath(o);s.isEmpty()||c.app.dock?.setIcon(s)},",
   "P=()=>{if(!v)return;let e=k();N(e),PZ({preference:e,resourceName:e===`codex-system`?j.light:null}).then(e=>{e&&N(k())})};",
   "if(v){P();let e=()=>{let e=k();e===`codex-system`&&N(e)};c.nativeTheme.on(`updated`,e),w.add(()=>{c.nativeTheme.off(`updated`,e)})}",
   "let F=null,I=new Rie({onWindowRegistered:e=>{F?.registerWindow(e),C?.(e)}});",
@@ -44,7 +48,12 @@ const currentTraySource =
 const currentMainSource = currentAppInfoSource + currentRuntimeSource + currentTraySource;
 
 const currentSettingsSource =
-  "function Ki(){let e=(0,Q.c)(27),t=n(m),r=R(),{platform:a}=Ze(),{data:o}=i(zn),s=u(y.dockIconPreference),l;e[0]===t?l=e[1]:(l=function(e){c(t,y.dockIconPreference,e)},e[0]=t,e[1]=l);let d=l;if(a!==`macOS`||w.ChatGPT!==`chatgpt`||T.Agent===`prod`)return null;let f=o?.dockIconPreviews;if(f==null)return null;return H(f,d)}";
+  "function Xi(){let e=(0,Q.c)(27),t=n(m),r=R(),{platform:a}=Ze(),{data:o}=i(Bn),s=u(y.dockIconPreference),l;e[0]===t?l=e[1]:(l=function(e){c(t,y.dockIconPreference,e)},e[0]=t,e[1]=l);let d=l;if(a!==`macOS`||w.ChatGPT!==`chatgpt`||T.Agent===`prod`)return null;let f=o?.dockIconPreviews;if(f==null)return null;return H(f,d)}";
+
+const currentSearchSource = applyLinuxSettingsSearchVisibilityPatch([
+  "function qn(e){let t=(0,Zn.c)(17),n=re(),r=Bn(e),{data:i}=_(e),a=i?.isSystemBackdropSupported!==!1,o=i?.platform===`darwin`,{data:s}=T(k,e.selectedHostId),c,l=c;if(a){let e;e=e=>e.sectionSlug===`appearance`&&!a?{...e,messages:e.messages.filter(Jn)}:e.sectionSlug===`agent`?{...e,terms:[]}:e,m=r.map(e)}else m=r;return m}",
+  "function Jn(e){return!Qn.includes(e.id)}",
+].join(""));
 
 function captureWarns(fn) {
   const originalWarn = console.warn;
@@ -80,7 +89,7 @@ test("Dock icon descriptors remain disabled until the nested tweak is enabled", 
     const dockDescriptors = loadLinuxFeaturePatchDescriptors({ featuresRoot }).filter(
       (descriptor) => descriptor.id.includes(":appearance-dock-icon-"),
     );
-    assert.equal(dockDescriptors.length, 2);
+    assert.equal(dockDescriptors.length, 3);
     assert.equal(dockDescriptors.every((descriptor) => descriptor.enabled({}) === false), true);
   });
   withFeatureConfig(
@@ -100,7 +109,7 @@ test("Dock icon descriptors remain disabled until the nested tweak is enabled", 
       const dockDescriptors = loadLinuxFeaturePatchDescriptors({ featuresRoot }).filter(
         (descriptor) => descriptor.id.includes(":appearance-dock-icon-"),
       );
-      assert.equal(dockDescriptors.length, 2);
+      assert.equal(dockDescriptors.length, 3);
       assert.equal(dockDescriptors.every((descriptor) => descriptor.enabled({}) === true), true);
     },
   );
@@ -144,17 +153,38 @@ test("main patch enables official previews and synchronizes Linux window and tra
   );
 });
 
-test("main patch rejects partial current-DMG drift byte-identically", () => {
-  const drifted = currentMainSource.replace("if(!v)return", "if(!v||disabled)return");
-  const { value, warnings } = captureWarns(() => applyDockIconMainPatch(drifted));
+test("main patch rejects drift at every current-DMG insertion point byte-identically", () => {
+  const insertionPoints = [
+    "if(process.platform!==`darwin`||t==null)return null",
+    "function gv(e){if(e==null)return null",
+    "E=e=>{if(!c.app.isPackaged)return null",
+    "N=t=>{if(t===`app-default`",
+    "P=()=>{if(!v)return",
+    "if(v){P();let e=()=>",
+    "onWindowRegistered:e=>{F?.registerWindow(e),C?.(e)}",
+    "codexLinuxRegisterTray(new c.Tray(t.defaultIcon))",
+  ];
 
-  assert.equal(value, drifted);
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /current Dock icon main-process contract/);
+  for (const insertionPoint of insertionPoints) {
+    assert.equal(currentMainSource.includes(insertionPoint), true, insertionPoint);
+    const splitAt = Math.floor(insertionPoint.length / 2);
+    const drifted = currentMainSource.replace(
+      insertionPoint,
+      `${insertionPoint.slice(0, splitAt)}drift${insertionPoint.slice(splitAt)}`,
+    );
+    const { value, warnings } = captureWarns(() => applyDockIconMainPatch(drifted));
+
+    assert.equal(value, drifted, insertionPoint);
+    assert.equal(warnings.length, 1, insertionPoint);
+    assert.match(warnings[0], /current Dock icon main-process contract/);
+  }
 });
 
 test("main patch rejects mixed patched and clean contracts byte-identically", () => {
-  const mixed = `${applyDockIconMainPatch(currentMainSource)}${currentMainSource}`;
+  const mixed = applyDockIconMainPatch(currentMainSource).replace(
+    "P=()=>{if(!v&&process.platform!==`linux`)return",
+    "P=()=>{if(!v)return",
+  );
   const { value, warnings } = captureWarns(() => applyDockIconMainPatch(mixed));
 
   assert.equal(value, mixed);
@@ -180,13 +210,36 @@ test("settings drift remains byte-identical", () => {
   assert.match(warnings[0], /current Dock icon settings contract/);
 });
 
+test("search patch restores Dock icon results after the Linux core patch", () => {
+  const patched = applyDockIconSearchPatch(currentSearchSource);
+  const secondPass = captureWarns(() => applyDockIconSearchPatch(patched));
+
+  assert.match(patched, /codexLinuxDarwinOnlySettingsSearchMessageIds=new Set\(\[\]\)/);
+  assert.equal(secondPass.value, patched);
+  assert.deepEqual(secondPass.warnings, []);
+});
+
+test("search drift remains byte-identical", () => {
+  const drifted = currentSearchSource.replace(
+    "settings.general.appearance.dockIcon.row.description",
+    "settings.general.appearance.dockIcon.row.subtitle",
+  );
+  const { value, warnings } = captureWarns(() => applyDockIconSearchPatch(drifted));
+
+  assert.equal(value, drifted);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /current Dock icon settings search contract/);
+});
+
 test("descriptor targets the current General settings asset", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "dock-icon-assets-"));
   try {
     const assetsDir = path.join(tempDir, "webview", "assets");
     fs.mkdirSync(assetsDir, { recursive: true });
-    const settingsPath = path.join(assetsDir, "general-settings-B8bUS3xL.js");
+    const settingsPath = path.join(assetsDir, "general-settings-Boi5S8Wz.js");
+    const searchPath = path.join(assetsDir, "settings-page-SrGKyWwG.js");
     fs.writeFileSync(settingsPath, currentSettingsSource);
+    fs.writeFileSync(searchPath, currentSearchSource);
 
     const settingsResult = patchAssetFiles(
       tempDir,
@@ -195,7 +248,18 @@ test("descriptor targets the current General settings asset", () => {
       "missing",
     );
     assert.deepEqual(settingsResult, { matched: 1, changed: 1 });
-    assert.equal(descriptors[1].pattern.test("general-settings-B8bUS3xL.js"), true);
+    const searchResult = patchAssetFiles(
+      tempDir,
+      descriptors[2].pattern,
+      descriptors[2].apply,
+      "missing",
+    );
+    assert.deepEqual(searchResult, { matched: 1, changed: 1 });
+    assert.equal(descriptors[1].pattern.test("general-settings-Boi5S8Wz.js"), true);
+    assert.equal(descriptors[1].pattern.test("general-settings-BMzH5BZ9.js"), false);
+    assert.equal(descriptors[1].pattern.test("general-settings-stale.js"), false);
+    assert.equal(descriptors[2].pattern.test("settings-page-SrGKyWwG.js"), true);
+    assert.equal(descriptors[2].pattern.test("settings-page-stale.js"), false);
     assert.equal(descriptors[1].pattern.test("general-settings-DMO9G9gL.js"), false);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -294,6 +358,13 @@ test("Dock icon staging copies only the official resources when enabled", () => 
       fs.statSync(path.join(fixture.targetDir, "sync-desktop-icon.sh")).mode & 0o777,
       0o755,
     );
+
+    const repeated = runDockIconHook("stage.sh", fixture.env);
+    assert.equal(repeated.status, 0, repeated.stderr);
+    assert.deepEqual(
+      fs.readdirSync(fixture.targetDir).sort(),
+      [...fixture.iconNames, "sync-desktop-icon.sh"].sort(),
+    );
   } finally {
     fs.rmSync(fixture.tempDir, { recursive: true, force: true });
   }
@@ -312,6 +383,27 @@ test("missing upstream Dock icon resources warn and do not fail the build", () =
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, /WARN: Upstream Dock icon resource is unavailable/);
     assert.equal(fs.existsSync(fixture.targetDir), false);
+  } finally {
+    fs.rmSync(fixture.tempDir, { recursive: true, force: true });
+  }
+});
+
+test("symbolic-link Dock icon resources warn and leave their targets untouched", () => {
+  const fixture = createDockIconHookFixture();
+  try {
+    fs.writeFileSync(fixture.configPath, JSON.stringify(dockIconFeatureConfig(true)));
+    const linkedIcon = path.join(fixture.upstreamResources, fixture.iconNames[0]);
+    const linkTarget = path.join(fixture.tempDir, "outside.png");
+    fs.rmSync(linkedIcon);
+    fs.writeFileSync(linkTarget, "outside");
+    fs.symlinkSync(linkTarget, linkedIcon);
+
+    const result = runDockIconHook("stage.sh", fixture.env);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /WARN: Upstream Dock icon resource is unavailable/);
+    assert.equal(fs.existsSync(fixture.targetDir), false);
+    assert.equal(fs.readFileSync(linkTarget, "utf8"), "outside");
   } finally {
     fs.rmSync(fixture.tempDir, { recursive: true, force: true });
   }
@@ -442,6 +534,41 @@ test("desktop synchronization leaves an unmanaged user launcher untouched", () =
     );
     assert.equal(fs.existsSync(fixture.managedIcon("chatgpt")), false);
     assert.equal(fs.existsSync(fixture.callsPath), false);
+  } finally {
+    fs.rmSync(fixture.tempDir, { recursive: true, force: true });
+  }
+});
+
+test("desktop synchronization discovers packaged launchers through XDG_DATA_DIRS", () => {
+  const fixture = createDesktopSyncFixture();
+  try {
+    const appId = "codex-dock-xdg";
+    const dataDir = path.join(fixture.tempDir, "profile", "share");
+    const sourceDir = path.join(dataDir, "applications");
+    fs.mkdirSync(sourceDir, { recursive: true });
+    fs.copyFileSync(
+      fixture.env.CODEX_LINUX_DESKTOP_FILE_SOURCE,
+      path.join(sourceDir, `${appId}.desktop`),
+    );
+    delete fixture.env.CODEX_LINUX_DESKTOP_FILE_SOURCE;
+    delete fixture.env.BAMF_DESKTOP_FILE_HINT;
+    fixture.env.CODEX_LINUX_APP_ID = appId;
+    fixture.env.XDG_DATA_DIRS = dataDir;
+
+    const result = runDesktopSync("chatgpt", fixture.firstIcon, fixture.env);
+    const managedIcon = path.join(
+      fixture.dataHome,
+      "icons",
+      "hicolor",
+      "256x256",
+      "apps",
+      `${appId}-dock-chatgpt.png`,
+    );
+    const managedDesktop = path.join(fixture.dataHome, "applications", `${appId}.desktop`);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.readFileSync(managedIcon, "utf8"), "first-icon");
+    assert.match(fs.readFileSync(managedDesktop, "utf8"), /^X-Codex-Linux-Dock-Icon=1$/m);
   } finally {
     fs.rmSync(fixture.tempDir, { recursive: true, force: true });
   }

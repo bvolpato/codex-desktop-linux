@@ -12,9 +12,9 @@ const currentWindowResource =
 const patchedWindowResource =
   "E=e=>{if(!c.app.isPackaged&&process.platform!==`linux`)return null;let t=codexLinuxDockIconResourcePath(e);return(0,h.existsSync)(t)?t:null}";
 const currentApplyIcon =
-  "N=t=>{if(t===`app-default`&&r!==i.a.Dev&&(c.app.isPackaged||e===n.nl.ChatGPT)){let e=c.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let a=t===`codex-system`?M():null,o=(a==null?null:O(a))??A(),s=o==null?c.nativeImage.createEmpty():c.nativeImage.createFromPath(o);s.isEmpty()||c.app.dock?.setIcon(s)}";
+  "N=t=>{if(t===`app-default`&&r!==i.a.Dev&&(c.app.isPackaged||e===n.rl.ChatGPT)){let e=c.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let a=t===`codex-system`?M():null,o=(a==null?null:O(a))??A(),s=o==null?c.nativeImage.createEmpty():c.nativeImage.createFromPath(o);s.isEmpty()||c.app.dock?.setIcon(s)}";
 const patchedApplyIcon =
-  "N=function codexLinuxApplyDockIcon(t){if(t===`app-default`&&process.platform!==`linux`&&r!==i.a.Dev&&(c.app.isPackaged||e===n.nl.ChatGPT)){let e=c.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let a=t===`codex-system`?M():null,o=(a==null?null:O(a))??A(),s=o==null?c.nativeImage.createEmpty():c.nativeImage.createFromPath(o);if(s.isEmpty())return;if(process.platform===`linux`){let l=t===`codex-system`?(c.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?`codex-dark`:`codex-light`):`chatgpt`;l===`codex-dark`?s=s.crop({x:34,y:34,width:956,height:956}):l===`codex-light`&&(s=s.crop({x:13,y:23,width:998,height:998}));globalThis.codexLinuxDockIconImage=s;for(let e of c.BrowserWindow.getAllWindows())e.isDestroyed()||e.setIcon(s);let u=dae()?.tray;u!=null&&!u.isDestroyed()&&u.setImage(s);let f=codexLinuxDockIconResourcePath(`sync-desktop-icon.sh`);if(h.existsSync(f))try{let e=require(`node:child_process`).spawn(f,[l],{detached:!0,stdio:[`pipe`,`ignore`,`ignore`]});e.on(`error`,()=>{}),e.stdin.on(`error`,()=>{}),e.stdin.end(s.toPNG()),e.unref()}catch(e){}return}c.app.dock?.setIcon(s)}";
+  "N=function codexLinuxApplyDockIcon(t){if(t===`app-default`&&process.platform!==`linux`&&r!==i.a.Dev&&(c.app.isPackaged||e===n.rl.ChatGPT)){let e=c.app.dock;e!=null&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}let a=t===`codex-system`?M():null,o=(a==null?null:O(a))??A(),s=o==null?c.nativeImage.createEmpty():c.nativeImage.createFromPath(o);if(s.isEmpty())return;if(process.platform===`linux`){let l=t===`codex-system`?(c.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?`codex-dark`:`codex-light`):`chatgpt`;l===`codex-dark`?s=s.crop({x:34,y:34,width:956,height:956}):l===`codex-light`&&(s=s.crop({x:13,y:23,width:998,height:998}));globalThis.codexLinuxDockIconImage=s;for(let e of c.BrowserWindow.getAllWindows())e.isDestroyed()||e.setIcon(s);let u=dae()?.tray;u!=null&&!u.isDestroyed()&&u.setImage(s);let f=codexLinuxDockIconResourcePath(`sync-desktop-icon.sh`);if(h.existsSync(f))try{let e=require(`node:child_process`).spawn(f,[l],{detached:!0,stdio:[`pipe`,`ignore`,`ignore`]});e.on(`error`,()=>{}),e.stdin.on(`error`,()=>{}),e.stdin.end(s.toPNG()),e.unref()}catch(e){}return}c.app.dock?.setIcon(s)}";
 const currentUpdateGate =
   "P=()=>{if(!v)return;let e=k();N(e),PZ({preference:e,resourceName:e===`codex-system`?j.light:null}).then(e=>{e&&N(k())})}";
 const patchedUpdateGate =
@@ -112,6 +112,26 @@ function applyDockIconSettingsPatch(source) {
   return source.replace(currentSettingsGate, patchedSettingsGate);
 }
 
+const currentSearchFilter =
+  "codexLinuxDarwinOnlySettingsSearchMessageIds=new Set([`settings.general.appearance.dockIcon.chatGPT.ariaLabel`,`settings.general.appearance.dockIcon.codex.ariaLabel`,`settings.general.appearance.dockIcon.label`,`settings.general.appearance.dockIcon.row.description`])";
+const patchedSearchFilter =
+  "codexLinuxDarwinOnlySettingsSearchMessageIds=new Set([])";
+
+function applyDockIconSearchPatch(source) {
+  const currentCount = countOccurrences(source, currentSearchFilter);
+  const patchedCount = countOccurrences(source, patchedSearchFilter);
+  if (currentCount === 0 && patchedCount === 1) {
+    return source;
+  }
+  if (currentCount !== 1 || patchedCount !== 0) {
+    console.warn(
+      "WARN: Could not find the current Dock icon settings search contract - skipping Dock icon search patch",
+    );
+    return source;
+  }
+  return source.replace(currentSearchFilter, patchedSearchFilter);
+}
+
 const descriptors = [
   {
     id: "appearance-dock-icon-main-process",
@@ -126,16 +146,28 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_950,
     ciPolicy: "optional",
-    pattern: /^general-settings-B8bUS3xL\.js$/,
+    pattern: /^general-settings-Boi5S8Wz\.js$/,
     missingDescription: "General settings Dock icon bundle",
     skipDescription: "Dock icon settings row patch",
     enabled: dockIconEnabled,
     apply: applyDockIconSettingsPatch,
   },
+  {
+    id: "appearance-dock-icon-settings-search",
+    phase: "webview-asset",
+    order: 20_960,
+    ciPolicy: "optional",
+    pattern: /^settings-page-SrGKyWwG\.js$/,
+    missingDescription: "Settings search bundle",
+    skipDescription: "Dock icon settings search patch",
+    enabled: dockIconEnabled,
+    apply: applyDockIconSearchPatch,
+  },
 ];
 
 module.exports = {
   applyDockIconMainPatch,
+  applyDockIconSearchPatch,
   applyDockIconSettingsPatch,
   descriptors,
   dockIconConfig,
