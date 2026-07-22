@@ -93,21 +93,13 @@ function enabledWorkspaceRootTargets(mainSource) {
   const targets = [];
   if (
     mainSource.includes("id:`vscode`") &&
-    (
-      mainSource.includes("linuxDetect:()=>codexLinuxOpenTargetExecutable(`code`)") ||
-      mainSource.includes("codexLinuxIdePlatform(`vscode`") ||
-      mainSource.includes("function codexLinuxIdeCommand(")
-    )
+    mainSource.includes("function codexLinuxIdeCommand(")
   ) {
     targets.push({ id: "vscode", label: "VS Code" });
   }
   if (
     mainSource.includes("id:`vscodeInsiders`") &&
-    (
-      mainSource.includes("linuxDetect:()=>codexLinuxOpenTargetExecutable(`code-insiders`)") ||
-      mainSource.includes("codexLinuxIdePlatform(`vscodeInsiders`") ||
-      mainSource.includes("function codexLinuxIdeCommand(")
-    )
+    mainSource.includes("function codexLinuxIdeCommand(")
   ) {
     targets.push({ id: "vscodeInsiders", label: "VS Code Insiders" });
   }
@@ -183,8 +175,8 @@ function onSelectNameCandidates(source, callbackName, searchStart) {
   return [...names];
 }
 
-function openTargetItem({ jsxVar, menuVar, openFn, pathVar, cwdVar, closeVar, target }) {
-  return `(0,${jsxVar}.jsx)(${menuVar}.Item,{key:\`${PATCH_MARKER}:${target.id}\`,onSelect:()=>{${openFn}({path:${pathVar},cwd:${cwdVar},target:\`${target.id}\`}),${closeVar}(!1)},children:\`${target.label}\`})`;
+function openTargetItem({ jsxVar, menuVar, openFn, pathVar, cwdExpression, closeVar, target }) {
+  return `(0,${jsxVar}.jsx)(${menuVar}.Item,{key:\`${PATCH_MARKER}:${target.id}\`,onSelect:()=>{${openFn}({path:${pathVar},cwd:${cwdExpression},target:\`${target.id}\`}),${closeVar}(!1)},children:\`${target.label}\`})`;
 }
 
 function applyWorkspaceRootOpenTargetsPatch(currentSource, targets) {
@@ -214,6 +206,17 @@ function applyWorkspaceRootOpenTargetsPatch(currentSource, targets) {
     const callbackEnd = findMatching(currentSource, callbackBraceIndex, "{", "}");
     if (callbackEnd === -1 || callbackEnd < openCallMatch.index) {
       warn("Could not parse workspace-root File Manager callback body");
+      continue;
+    }
+
+    const callbackPrefix = currentSource.slice(callbackBraceIndex + 1, openCallMatch.index);
+    const cwdExpressionPattern = new RegExp(
+      `(?:let|const|var)\\s+${escapeRegExp(cwdVar)}=([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)?\\(${escapeRegExp(pathVar)}\\))(?=[,;])`,
+      "u",
+    );
+    const cwdExpression = callbackPrefix.match(cwdExpressionPattern)?.[1] ?? null;
+    if (cwdExpression == null) {
+      warn("Could not identify workspace-root cwd expression");
       continue;
     }
 
@@ -249,7 +252,7 @@ function applyWorkspaceRootOpenTargetsPatch(currentSource, targets) {
         menuVar: item.menuVar,
         openFn,
         pathVar,
-        cwdVar,
+        cwdExpression,
         closeVar,
         target,
       }),
@@ -302,7 +305,13 @@ function patchWorkspaceRootOpenTargets(extractedDir) {
   let changed = 0;
 
   for (const name of fs.readdirSync(assetsDir)) {
+    if (!name.endsWith(".js")) {
+      continue;
+    }
     const filePath = path.join(assetsDir, name);
+    if (!fs.statSync(filePath).isFile()) {
+      continue;
+    }
     const source = fs.readFileSync(filePath, "utf8");
     if (
       !source.includes("sidebarElectron.createStableWorktree") ||

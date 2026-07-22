@@ -11,19 +11,7 @@ function buildUpdateManagerEnvSource() {
 }
 
 function buildInstallAfterQuitSource(childProcessVar) {
-  return `function codexLinuxInstallAfterQuit(){try{let e=${childProcessVar}.spawn(\`/bin/sh\`,[\`-c\`,\`for i in 1 2 3 4 5 6 7 8 9 10;do sleep 1;s="$("$1" status 2>/dev/null||true)";echo "$s"|grep -q "^status: WaitingForAppExit"&&continue;echo "$s"|grep -q "^status: Installing"&&continue;"$1" install-ready||exit $?;s="$("$1" status 2>/dev/null||true)";echo "$s"|grep -q "^status: WaitingForAppExit"&&continue;echo "$s"|grep -q "^status: Installing"&&continue;if echo "$s"|grep -q "^status: Installed";then (/usr/bin/codex-desktop >/dev/null 2>&1 &);fi;exit 0;done\`,\`codex-linux-update-install\`,codexLinuxUpdateManagerPath()],{detached:!0,stdio:\`ignore\`,windowsHide:!0});e.unref?.()}catch{}}`;
-}
-
-function replaceAfter(source, anchor, search, replacement) {
-  const anchorIndex = source.indexOf(anchor);
-  if (anchorIndex === -1) {
-    return source;
-  }
-  const matchIndex = source.indexOf(search, anchorIndex);
-  if (matchIndex === -1) {
-    return source;
-  }
-  return source.slice(0, matchIndex) + replacement + source.slice(matchIndex + search.length);
+  return `function codexLinuxInstallAfterQuit(){try{let e=${childProcessVar}.spawn(\`/bin/sh\`,[\`-c\`,\`for i in 1 2 3 4 5 6 7 8 9 10;do sleep 1;s="$("$1" status 2>/dev/null||true)";echo "$s"|grep -q "^status: WaitingForAppExit"&&continue;echo "$s"|grep -q "^status: Installing"&&continue;"$1" install-ready||exit $?;s="$("$1" status 2>/dev/null||true)";echo "$s"|grep -q "^status: WaitingForAppExit"&&continue;echo "$s"|grep -q "^status: Installing"&&continue;if echo "$s"|grep -q "^status: Installed";then (/usr/bin/codex-desktop >/dev/null 2>&1 &);fi;exit 0;done\`,\`codex-linux-update-install\`,codexLinuxUpdateManagerPath()],{detached:!0,stdio:\`ignore\`,windowsHide:!0,env:codexLinuxUpdateManagerEnv()});e.unref?.()}catch{}}`;
 }
 
 function buildElectronResolverSource() {
@@ -40,119 +28,7 @@ function buildBridgeSource({ childProcessVar, fsVar, pathVar }) {
     `async function codexLinuxShowUpdateMessage(codexLinuxMessage,codexLinuxDetail){try{let e=codexLinuxGetElectronModule();if(!e)return;await e.dialog?.showMessageBox({type:\`info\`,buttons:[\`OK\`],defaultId:0,noLink:!0,message:codexLinuxMessage,detail:codexLinuxDetail})}catch{}}`;
   const installAfterQuit = buildInstallAfterQuitSource(childProcessVar);
   const quitForUpdate = buildQuitForUpdateSource(true);
-  return `${buildElectronResolverSource()}function codexLinuxUpdateStatePath(){let e=process.env.XDG_STATE_HOME||process.env.HOME&&(0,${pathVar}.join)(process.env.HOME,\`.local\`,\`state\`);return e?(0,${pathVar}.join)(e,\`codex-update-manager\`,\`state.json\`):null}function codexLinuxReadUpdateState(){let e=codexLinuxUpdateStatePath();if(!e||!${fsVar}.existsSync(e))return null;try{let t=JSON.parse(${fsVar}.readFileSync(e,\`utf8\`));return t&&typeof t===\`object\`&&!Array.isArray(t)?t:null}catch{return null}}function codexLinuxUpdateLifecycleState(e){switch(e){case\`ready_to_install\`:case\`waiting_for_app_exit\`:return\`ready\`;case\`installing\`:return\`installing\`;case\`checking_upstream\`:case\`update_detected\`:case\`downloading_dmg\`:case\`preparing_workspace\`:case\`patching_app\`:case\`building_package\`:return\`checking\`;default:return\`idle\`}}function codexLinuxUpdateManagerPath(){let e=process.env.CODEX_UPDATE_MANAGER_PATH;return typeof e===\`string\`&&e.trim().length>0?e:\`codex-update-manager\`}${showUpdateMessage}${installAfterQuit}${quitForUpdate}function codexLinuxRunUpdateManager(e){return new Promise((t,n)=>{${childProcessVar}.execFile(codexLinuxUpdateManagerPath(),e,{encoding:\`utf8\`,windowsHide:!0},(e,r,i)=>{if(e){e.stdout=r,e.stderr=i,n(e);return}t({stdout:r??\`\`,stderr:i??\`\`})})})}async function codexLinuxProbeUpdateManager(){await codexLinuxRunUpdateManager([\`--help\`])}async function codexLinuxRefreshUpdateState(){return codexLinuxReadUpdateState()}`;
-}
-
-function migrateLinuxUpdaterBridgeSource(source) {
-  let patchedSource = source.replace(
-    "async function codexLinuxRefreshUpdateState(){await codexLinuxRunUpdateManager([`status`,`--json`]);return codexLinuxReadUpdateState()}",
-    "async function codexLinuxRefreshUpdateState(){return codexLinuxReadUpdateState()}",
-  );
-  if (patchedSource.includes("function codexLinuxRunUpdateManager(")) {
-    if (!patchedSource.includes("function codexLinuxUpdateManagerEnv(")) {
-      patchedSource = patchedSource.replace(
-        "function codexLinuxUpdateStatePath(",
-        `${buildUpdateManagerEnvSource()}function codexLinuxUpdateStatePath(`,
-      );
-    }
-    if (patchedSource.includes("function codexLinuxUpdateManagerEnv(")) {
-      patchedSource = patchedSource
-        .replace(
-          "{encoding:`utf8`,windowsHide:!0}",
-          "{encoding:`utf8`,windowsHide:!0,env:codexLinuxUpdateManagerEnv()}",
-        )
-        .replace(
-          "{detached:!0,stdio:`ignore`,windowsHide:!0}",
-          "{detached:!0,stdio:`ignore`,windowsHide:!0,env:codexLinuxUpdateManagerEnv()}",
-        );
-    }
-  }
-  const probeSource =
-    "async function codexLinuxProbeUpdateManager(){await codexLinuxRunUpdateManager([`--help`])}";
-  const refreshSource =
-    "async function codexLinuxRefreshUpdateState(){return codexLinuxReadUpdateState()}";
-  if (
-    patchedSource.includes("function codexLinuxRunUpdateManager(") &&
-    patchedSource.includes(refreshSource) &&
-    !patchedSource.includes(probeSource)
-  ) {
-    patchedSource = patchedSource.replace(
-      refreshSource,
-      `${probeSource}${refreshSource}`,
-    );
-  }
-
-  const bootstrapNeedle = "function codexLinuxCreatePackageUpdateManager(";
-  const isBootstrapSource = patchedSource.includes(bootstrapNeedle);
-  if (
-    patchedSource.includes("function codexLinuxRunUpdateManager(") &&
-    isBootstrapSource &&
-    (!patchedSource.includes(probeSource) || !patchedSource.includes(refreshSource))
-  ) {
-    const helperSource =
-      `${patchedSource.includes(probeSource) ? "" : probeSource}` +
-      `${patchedSource.includes(refreshSource) ? "" : refreshSource}`;
-    patchedSource = patchedSource.replace(bootstrapNeedle, `${helperSource}${bootstrapNeedle}`);
-  }
-
-  patchedSource = patchedSource.replace(
-    "await codexLinuxRefreshUpdateState(),e()",
-    "await codexLinuxProbeUpdateManager(),e()",
-  );
-
-  const probeStateSource =
-    "let s=!1,c=codexLinuxProbeUpdateManager().then(()=>{s=!0,i(),a();return!0}).catch(()=>{s=!1,t=!1,n=`idle`,a();return!1});let o=";
-  const hasProbeState = () => patchedSource.includes("c=codexLinuxProbeUpdateManager().then(");
-  if (isBootstrapSource && !hasProbeState() && patchedSource.includes(probeSource)) {
-    patchedSource = replaceAfter(
-      patchedSource,
-      bootstrapNeedle,
-      "i(),codexLinuxRefreshUpdateState().then(()=>{i(),a()}).catch(()=>{});let o=",
-      probeStateSource,
-    );
-    patchedSource = replaceAfter(patchedSource, bootstrapNeedle, "i();let o=", probeStateSource);
-  }
-
-  if (!isBootstrapSource || !hasProbeState()) {
-    return patchedSource;
-  }
-
-  patchedSource = replaceAfter(
-    patchedSource,
-    bootstrapNeedle,
-    "getIsUpdateReady:()=>t,getUpdateLifecycleState:()=>n,",
-    "getIsUpdateReady:()=>s&&t,getUpdateLifecycleState:()=>s?n:`idle`,",
-  );
-  patchedSource = replaceAfter(
-    patchedSource,
-    bootstrapNeedle,
-    "checkForUpdates:async()=>{n=`checking`,a();try{",
-    "checkForUpdates:async()=>{if(!await c)return;n=`checking`,a();try{",
-  );
-  patchedSource = replaceAfter(
-    patchedSource,
-    bootstrapNeedle,
-    "installUpdatesIfAvailable:async()=>{i();if(!t){a();return}",
-    "installUpdatesIfAvailable:async()=>{if(!await c){a();return}i();if(!t){a();return}",
-  );
-  patchedSource = replaceAfter(
-    patchedSource,
-    bootstrapNeedle,
-    "installUpdatesIfAvailable:async()=>{i();if(!t)return;",
-    "installUpdatesIfAvailable:async()=>{if(!await c){a();return}i();if(!t){a();return}",
-  );
-  patchedSource = replaceAfter(
-    patchedSource,
-    bootstrapNeedle,
-    "refresh:async()=>{try{await codexLinuxRefreshUpdateState()}catch{}i(),a()}",
-    "refresh:async()=>{if(await c){try{await codexLinuxRefreshUpdateState()}catch{}i()}else t=!1,n=`idle`;a()}",
-  );
-  return replaceAfter(
-    patchedSource,
-    bootstrapNeedle,
-    "refresh:()=>{i(),a()}",
-    "refresh:async()=>{if(await c){try{await codexLinuxRefreshUpdateState()}catch{}i()}else t=!1,n=`idle`;a()}",
-  );
+  return `${buildElectronResolverSource()}${buildUpdateManagerEnvSource()}function codexLinuxUpdateStatePath(){let e=process.env.XDG_STATE_HOME||process.env.HOME&&(0,${pathVar}.join)(process.env.HOME,\`.local\`,\`state\`);return e?(0,${pathVar}.join)(e,\`codex-update-manager\`,\`state.json\`):null}function codexLinuxReadUpdateState(){let e=codexLinuxUpdateStatePath();if(!e||!${fsVar}.existsSync(e))return null;try{let t=JSON.parse(${fsVar}.readFileSync(e,\`utf8\`));return t&&typeof t===\`object\`&&!Array.isArray(t)?t:null}catch{return null}}function codexLinuxUpdateLifecycleState(e){switch(e){case\`ready_to_install\`:case\`waiting_for_app_exit\`:return\`ready\`;case\`installing\`:return\`installing\`;case\`checking_upstream\`:case\`update_detected\`:case\`downloading_dmg\`:case\`preparing_workspace\`:case\`patching_app\`:case\`building_package\`:return\`checking\`;default:return\`idle\`}}function codexLinuxUpdateManagerPath(){let e=process.env.CODEX_UPDATE_MANAGER_PATH;return typeof e===\`string\`&&e.trim().length>0?e:\`codex-update-manager\`}${showUpdateMessage}${installAfterQuit}${quitForUpdate}function codexLinuxRunUpdateManager(e){return new Promise((t,n)=>{${childProcessVar}.execFile(codexLinuxUpdateManagerPath(),e,{encoding:\`utf8\`,windowsHide:!0,env:codexLinuxUpdateManagerEnv()},(e,r,i)=>{if(e){e.stdout=r,e.stderr=i,n(e);return}t({stdout:r??\`\`,stderr:i??\`\`})})})}async function codexLinuxProbeUpdateManager(){await codexLinuxRunUpdateManager([\`--help\`])}async function codexLinuxRefreshUpdateState(){return codexLinuxReadUpdateState()}`;
 }
 
 function buildBootstrapBridgeSource({ childProcessVar, fsVar, pathVar }) {
@@ -168,10 +44,9 @@ function applyCurrentBootstrapUpdaterBridgePatch(currentSource) {
     return currentSource;
   }
 
-  const childProcessVar =
-    requireName(currentSource, "node:child_process") ?? requireName(currentSource, "child_process");
-  const fsVar = requireName(currentSource, "node:fs") ?? requireName(currentSource, "fs");
-  const pathVar = requireName(currentSource, "node:path") ?? requireName(currentSource, "path");
+  const childProcessVar = requireName(currentSource, "node:child_process");
+  const fsVar = requireName(currentSource, "node:fs");
+  const pathVar = requireName(currentSource, "node:path");
   if (childProcessVar == null || fsVar == null || pathVar == null) {
     console.warn("WARN: Could not find updater bridge module bindings - skipping Linux updater bridge patch");
     return currentSource;
@@ -193,8 +68,6 @@ function applyCurrentBootstrapUpdaterBridgePatch(currentSource) {
     );
   }
 
-  patchedSource = migrateLinuxUpdaterBridgeSource(patchedSource);
-
   const destructureRegex =
     /let\{startedAtMs:([A-Za-z_$][\w$]*),buildFlavor:([A-Za-z_$][\w$]*),desktopSentry:([A-Za-z_$][\w$]*),sparkleManager:([A-Za-z_$][\w$]*),productionAppcastStateStore:[A-Za-z_$][\w$]*,setSparkleBridgeHandlers:([A-Za-z_$][\w$]*),setSecondInstanceArgsHandler:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\(\),/;
   const destructureMatch = patchedSource.match(destructureRegex);
@@ -210,17 +83,12 @@ function applyCurrentBootstrapUpdaterBridgePatch(currentSource) {
   const bridgeHandlersSearchSource = bridgeHandlersStart === -1
     ? ""
     : patchedSource.slice(bridgeHandlersStart);
-  const messageDispatcherVar = bridgeHandlersSearchSource.match(
-    /([A-Za-z_$][\w$]*)\.sendMessageToAllRegisteredWindows\(\{type:`app-update-ready-changed`/,
-  )?.[1] ?? null;
   const appUpdateStateBroadcasterVar = bridgeHandlersSearchSource.match(
     /([A-Za-z_$][\w$]*)\.broadcastAppUpdateState\(\)/,
   )?.[1] ?? null;
-  const sendCallback = messageDispatcherVar == null
-    ? appUpdateStateBroadcasterVar == null
-      ? null
-      : `send:()=>${appUpdateStateBroadcasterVar}.broadcastAppUpdateState()`
-    : `send:e=>${messageDispatcherVar}.sendMessageToAllRegisteredWindows(e)`;
+  const sendCallback = appUpdateStateBroadcasterVar == null
+    ? null
+    : `send:()=>${appUpdateStateBroadcasterVar}.broadcastAppUpdateState()`;
   if (sendCallback == null) {
     console.warn("WARN: Could not identify current updater window message dispatcher - skipping Linux updater bridge patch");
     return currentSource;

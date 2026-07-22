@@ -1824,32 +1824,6 @@ function appSunsetBundleWithDriftingGateFixture() {
 
 function currentBootstrapUpdaterBundleFixture() {
   return [
-    "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`),u=require(`node:child_process`);",
-    "c({onUpdateReadyChanged:e=>{a.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})}});",
-    "var rK={enabled:!1,running:!1,state:`disabled`};",
-    "async function iK(){",
-    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,productionAppcastStateStore:P,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.x(),d=t.T.shouldIncludeSparkle(a,process.platform,process.env);",
-    "let M=oG({});let ee=new G5,ce=null,te=e=>{if(e?.quitImmediately===!1){ee.allowQuitTemporarilyForUpdateInstall();return}ee.allowQuitTemporarilyForUpdateInstall(),n.app.quit()},B=iae({});",
-    "c({onInstallProgressChanged:e=>{E&&M.sendMessageToAllRegisteredWindows({type:`app-update-install-progress-changed`,installProgressPercent:e})},onUpdateReadyChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})},onUpdateLifecycleStateChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-lifecycle-state-changed`,lifecycleState:e})},onInstallUpdatesRequested:()=>{te()},isTrustedIpcEvent:N});",
-    "}exports.runMainAppStartup=iK;",
-  ].join("");
-}
-
-function currentBootstrapUpdaterBundleWithParametrizedQuitFixture() {
-  return [
-    "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`),u=require(`node:child_process`);",
-    "c({onUpdateReadyChanged:e=>{a.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})}});",
-    "var rK={enabled:!1,running:!1,state:`disabled`};",
-    "async function iK(){",
-    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,productionAppcastStateStore:P,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.x(),d=t.T.shouldIncludeSparkle(a,process.platform,process.env);",
-    "let M=oG({});let ee=new G5,te=null,ne=e=>{if(e?.quitImmediately===!1){ee.allowQuitTemporarilyForUpdateInstall();return}ee.allowQuitTemporarilyForUpdateInstall(),n.app.quit()},B=iae({});",
-    "c({onInstallProgressChanged:e=>{E&&M.sendMessageToAllRegisteredWindows({type:`app-update-install-progress-changed`,installProgressPercent:e})},onUpdateReadyChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})},onUpdateLifecycleStateChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-lifecycle-state-changed`,lifecycleState:e})},onInstallUpdatesRequested:e=>{ne(e)},isTrustedIpcEvent:N});",
-    "}exports.runMainAppStartup=iK;",
-  ].join("");
-}
-
-function currentBootstrapUpdaterBundleWithAppUpdateStateBroadcastFixture() {
-  return [
     "let r=require(`electron`),i=require(`node:path`),o=require(`node:fs`),u=require(`node:child_process`);",
     "var g6={enabled:!1,running:!1,state:`disabled`};",
     "async function v6(){",
@@ -6726,8 +6700,8 @@ test("adds Linux package updater to current bootstrap updater wiring", () => {
 
   assert.match(patched, /function codexLinuxCreatePackageUpdateManager\(/);
   assert.match(patched, /codexLinuxPackageUpdateBridge=process\.platform===`linux`/);
-  assert.match(patched, /send:e=>M\.sendMessageToAllRegisteredWindows\(e\)/);
-  assert.doesNotMatch(patched, /send:e=>a\.sendMessageToAllRegisteredWindows\(e\)/);
+  assert.match(patched, /send:\(\)=>se\.broadcastAppUpdateState\(\)/);
+  assert.doesNotMatch(patched, /send:e=>[A-Za-z_$][\w$]*\.sendMessageToAllRegisteredWindows/);
   assert.match(patched, /s=codexLinuxPackageUpdateBridge\.manager/);
   assert.match(patched, /te=codexLinuxPackageUpdateBridge\.quitForUpdate/);
   assert.match(patched, /async function codexLinuxProbeUpdateManager\(\)/);
@@ -6743,129 +6717,18 @@ test("adds Linux package updater to current bootstrap updater wiring", () => {
   assert.doesNotMatch(patched, /codexLinuxRunUpdateManager\(\[`status`,`--json`\]\)/);
 });
 
-test("adds Linux package updater to current bootstrap updater wiring after callback drift", () => {
-  const patched = applyPatchTwice(
-    applyLinuxAppUpdaterBridgePatch,
-    currentBootstrapUpdaterBundleWithParametrizedQuitFixture(),
+test("fails soft when the current updater callback bridge drifts", () => {
+  const source = currentBootstrapUpdaterBundleFixture().replace(
+    "let ee=new G5,P=null,te=e=>",
+    "let ee=G5(),P=null,te=e=>",
   );
 
-  assert.match(patched, /function codexLinuxCreatePackageUpdateManager\(/);
-  assert.match(patched, /codexLinuxPackageUpdateBridge=process\.platform===`linux`/);
-  assert.match(patched, /s=codexLinuxPackageUpdateBridge\.manager/);
-  assert.match(patched, /ne=codexLinuxPackageUpdateBridge\.quitForUpdate/);
-  assert.match(patched, /send:e=>M\.sendMessageToAllRegisteredWindows\(e\)/);
-});
-
-test("adds Linux package updater to current bootstrap updater wiring after broadcast drift", () => {
-  const patched = applyPatchTwice(
-    applyLinuxAppUpdaterBridgePatch,
-    currentBootstrapUpdaterBundleWithAppUpdateStateBroadcastFixture(),
+  const { value: patched, warnings } = captureWarns(() =>
+    applyLinuxAppUpdaterBridgePatch(source),
   );
 
-  assert.match(patched, /function codexLinuxCreatePackageUpdateManager\(/);
-  assert.match(patched, /codexLinuxPackageUpdateBridge=process\.platform===`linux`/);
-  assert.match(patched, /send:\(\)=>se\.broadcastAppUpdateState\(\)/);
-  assert.match(patched, /s=codexLinuxPackageUpdateBridge\.manager/);
-  assert.match(patched, /te=codexLinuxPackageUpdateBridge\.quitForUpdate/);
-  assert.doesNotMatch(patched, /send:e=>se\.sendMessageToAllRegisteredWindows/);
-});
-
-test("adds Linux package updater to current bootstrap updater wiring when dispatcher is farther away", () => {
-  const source = [
-    "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`),u=require(`node:child_process`);",
-    "c({onUpdateReadyChanged:e=>{a.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})}});",
-    "var rK={enabled:!1,running:!1,state:`disabled`};",
-    "async function iK(){",
-    "let{startedAtMs:r,buildFlavor:a,desktopSentry:o,sparkleManager:s,productionAppcastStateStore:P,setSparkleBridgeHandlers:c,setSecondInstanceArgsHandler:l}=t.x(),d=t.T.shouldIncludeSparkle(a,process.platform,process.env);",
-    "let M=oG({});let ee=new G5,ce=null,te=e=>{if(e?.quitImmediately===!1){ee.allowQuitTemporarilyForUpdateInstall();return}ee.allowQuitTemporarilyForUpdateInstall(),n.app.quit()},B=iae({});",
-    "c({onInstallProgressChanged:e=>{E&&M.sendMessageToAllRegisteredWindows({type:`app-update-install-progress-changed`,installProgressPercent:e})},onUpdateReadyChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-ready-changed`,isUpdateReady:e})},onUpdateLifecycleStateChanged:e=>{M.sendMessageToAllRegisteredWindows({type:`app-update-lifecycle-state-changed`,lifecycleState:e})},",
-    "let codexLinuxPadding=`" + "x".repeat(2000) + "`;",
-    "onInstallUpdatesRequested:()=>{te()},isTrustedIpcEvent:N});",
-    "}exports.runMainAppStartup=iK;",
-  ].join("");
-
-  const patched = applyPatchTwice(applyLinuxAppUpdaterBridgePatch, source);
-
-  assert.match(patched, /function codexLinuxCreatePackageUpdateManager\(/);
-  assert.match(patched, /send:e=>M\.sendMessageToAllRegisteredWindows\(e\)/);
-});
-
-test("migrates already-patched bootstrap updater bridge to probe before enabling UI", () => {
-  const patched = applyLinuxAppUpdaterBridgePatch(currentBootstrapUpdaterBundleFixture());
-  const oldPatched = patched
-    .replace(
-      "let s=!1,c=codexLinuxProbeUpdateManager().then(()=>{s=!0,i(),a();return!0}).catch(()=>{s=!1,t=!1,n=`idle`,a();return!1});let o=",
-      "i(),codexLinuxRefreshUpdateState().then(()=>{i(),a()}).catch(()=>{});let o=",
-    )
-    .replace(
-      "getIsUpdateReady:()=>s&&t,getUpdateLifecycleState:()=>s?n:`idle`,",
-      "getIsUpdateReady:()=>t,getUpdateLifecycleState:()=>n,",
-    )
-    .replace(
-      "checkForUpdates:async()=>{if(!await c)return;n=`checking`,a();try{",
-      "checkForUpdates:async()=>{n=`checking`,a();try{",
-    )
-    .replace(
-      "installUpdatesIfAvailable:async()=>{if(!await c){a();return}i();if(!t){a();return}",
-      "installUpdatesIfAvailable:async()=>{i();if(!t)return;",
-    )
-    .replace(
-      "refresh:async()=>{if(await c){try{await codexLinuxRefreshUpdateState()}catch{}i()}else t=!1,n=`idle`;a()}",
-      "refresh:async()=>{try{await codexLinuxRefreshUpdateState()}catch{}i(),a()}",
-    );
-
-  const migrated = applyPatchTwice(applyLinuxAppUpdaterBridgePatch, oldPatched);
-
-  assert.match(migrated, /codexLinuxProbeUpdateManager\(\)\.then\(\(\)=>\{s=!0,i\(\),a\(\);return!0\}\)/);
-  assert.match(migrated, /getIsUpdateReady:\(\)=>s&&t/);
-  assert.match(migrated, /installUpdatesIfAvailable:async\(\)=>\{if\(!await c\)\{a\(\);return\}i\(\);if\(!t\)\{a\(\);return\}/);
-});
-
-test("migrates previous bootstrap updater bridge without leaving undefined probe state", () => {
-  const patched = applyLinuxAppUpdaterBridgePatch(currentBootstrapUpdaterBundleFixture());
-  const oldPatched = patched
-    .replace(
-      "async function codexLinuxProbeUpdateManager(){await codexLinuxRunUpdateManager([`--help`])}",
-      "",
-    )
-    .replace(
-      "async function codexLinuxRefreshUpdateState(){return codexLinuxReadUpdateState()}",
-      "",
-    )
-    .replace(
-      ",s=!1,c=codexLinuxProbeUpdateManager().then(()=>{s=!0,i(),a();return!0}).catch(()=>{s=!1,t=!1,n=`idle`,a();return!1});let o=",
-      ";i();let o=",
-    )
-    .replace(
-      "getIsUpdateReady:()=>s&&t,getUpdateLifecycleState:()=>s?n:`idle`,",
-      "getIsUpdateReady:()=>t,getUpdateLifecycleState:()=>n,",
-    )
-    .replace(
-      "checkForUpdates:async()=>{if(!await c)return;n=`checking`,a();try{",
-      "checkForUpdates:async()=>{n=`checking`,a();try{",
-    )
-    .replace(
-      "installUpdatesIfAvailable:async()=>{if(!await c){a();return}i();if(!t){a();return}",
-      "installUpdatesIfAvailable:async()=>{i();if(!t)return;",
-    )
-    .replace(
-      "refresh:async()=>{if(await c){try{await codexLinuxRefreshUpdateState()}catch{}i()}else t=!1,n=`idle`;a()}",
-      "refresh:()=>{i(),a()}",
-    );
-
-  assert.doesNotMatch(oldPatched, /codexLinuxProbeUpdateManager/);
-  assert.doesNotMatch(oldPatched, /codexLinuxRefreshUpdateState/);
-  assert.match(oldPatched, /i\(\);let o=/);
-
-  const migrated = applyPatchTwice(applyLinuxAppUpdaterBridgePatch, oldPatched);
-
-  assert.match(migrated, /async function codexLinuxProbeUpdateManager\(\)\{await codexLinuxRunUpdateManager\(\[`--help`\]\)\}/);
-  assert.match(migrated, /async function codexLinuxRefreshUpdateState\(\)\{return codexLinuxReadUpdateState\(\)\}/);
-  assert.match(migrated, /let s=!1,c=codexLinuxProbeUpdateManager\(\)\.then/);
-  assert.match(migrated, /getIsUpdateReady:\(\)=>s&&t/);
-  assert.match(migrated, /checkForUpdates:async\(\)=>\{if\(!await c\)return;n=`checking`/);
-  assert.match(migrated, /installUpdatesIfAvailable:async\(\)=>\{if\(!await c\)\{a\(\);return\}i\(\);if\(!t\)\{a\(\);return\}/);
-  assert.match(migrated, /refresh:async\(\)=>\{if\(await c\)\{try\{await codexLinuxRefreshUpdateState\(\)\}/);
+  assert.equal(patched, source);
+  assert.match(warnings.join("\n"), /Could not find current updater callback bridge/);
 });
 
 test("enables the existing app update menu on Linux", () => {

@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 
 const workspaceRootOpenTargetsPatch = require("./patches/core/all-linux/extracted-app/workspace-root-open-targets/patch.js");
 const {
@@ -118,10 +119,48 @@ test("workspace root dropdown follows aliased File Manager callbacks", () => {
   assert.match(patched, /codexLinuxWorkspaceRootOpenTarget:vscode/);
   assert.match(patched, /codexLinuxWorkspaceRootOpenTarget:zed/);
   assert.match(patched, /codexLinuxWorkspaceRootOpenTarget:terminal/);
-  assert.match(patched, /onSelect:\(\)=>\{Ta\(\{path:_,cwd:e,target:`vscode`\}\),a\(!1\)\}/);
+  assert.match(patched, /onSelect:\(\)=>\{Ta\(\{path:_,cwd:S\(_\),target:`vscode`\}\),a\(!1\)\}/);
   assert.match(patched, /target:`fileManager`/);
   assert.match(patched, /\(0,\$\.jsx\)\(di\.Item,\{LeftIcon:em,onSelect:w/);
   assert.equal(applyWorkspaceRootOpenTargetsPatch(patched, targets), patched);
+});
+
+test("workspace root dropdown recomputes cwd inside generated open target handlers", () => {
+  const source = [
+    "function CurrentWorkspaceMenu(){",
+    "let _=`/tmp/project`,a=()=>{},C,w,E;",
+    "C=()=>{if(_==null)return;let e=S(_);Ta({path:_,cwd:e,target:`fileManager`}),a(!1)};",
+    "w=C;",
+    "E=_==null?null:(0,$.jsx)(di.Item,{LeftIcon:em,onSelect:w,children:(0,$.jsx)(Gh,{platform:m})});",
+    "return (0,$.jsxs)($.Fragment,{children:[E]})",
+    "}",
+  ].join("");
+  const patched = applyWorkspaceRootOpenTargetsPatch(source, [
+    { id: "vscode", label: "VS Code" },
+  ]);
+  const calls = [];
+  const context = {
+    calls,
+    di: { Item: Symbol("Item") },
+    em: Symbol("FileManagerIcon"),
+    Gh: Symbol("FileManagerLabel"),
+    m: "linux",
+    S: (workspaceRoot) => `cwd:${workspaceRoot}`,
+    Ta: (payload) => calls.push(payload),
+    $: {
+      Fragment: Symbol("Fragment"),
+      jsx: (_type, props) => ({ props }),
+      jsxs: (_type, props) => ({ props }),
+    },
+  };
+
+  vm.runInNewContext(`${patched};result=CurrentWorkspaceMenu()`, context);
+  const generatedItem = context.result.props.children[0].props.children[0];
+  generatedItem.props.onSelect();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    { path: "/tmp/project", cwd: "cwd:/tmp/project", target: "vscode" },
+  ]);
 });
 
 test("workspace root open targets patch scans the current app page chunk", () => {
