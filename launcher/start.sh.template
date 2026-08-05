@@ -2450,12 +2450,24 @@ pid_is_foreign_codex_electron() {
     pid_matches_app_identity "$pid"
 }
 
+proc_cmdline_is_electron() {
+    local proc_cmdline="$1"
+    local arg0=""
+
+    [ -r "$proc_cmdline" ] || return 1
+    IFS= read -r -d '' arg0 < "$proc_cmdline" 2>/dev/null || true
+    case "${arg0##*/}" in
+        electron|electron\ *) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 discover_running_app_pid() {
     local pid
     local proc_cmdline
 
     for proc_cmdline in /proc/[0-9]*/cmdline; do
-        [ -r "$proc_cmdline" ] || continue
+        proc_cmdline_is_electron "$proc_cmdline" || continue
         pid="${proc_cmdline#/proc/}"
         pid="${pid%/cmdline}"
         if pid_matches_running_app "$pid" && pid_in_same_launch_instance "$pid"; then
@@ -2472,7 +2484,7 @@ discover_foreign_app_pid() {
     local proc_cmdline
 
     for proc_cmdline in /proc/[0-9]*/cmdline; do
-        [ -r "$proc_cmdline" ] || continue
+        proc_cmdline_is_electron "$proc_cmdline" || continue
         pid="${proc_cmdline#/proc/}"
         pid="${pid%/cmdline}"
         if pid_is_foreign_codex_electron "$pid"; then
