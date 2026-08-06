@@ -517,6 +517,29 @@ function applyLinuxXdgDocumentsDirPatch(currentSource) {
   return currentSource.replace(documentsDirRegex, () => patchedFn);
 }
 
+function applyLinuxProtocolClientRegistrationPatch(currentSource) {
+  const patchedRegistrationRegex =
+    /process\.platform!==`linux`&&[A-Za-z_$][\w$]*\.deepLinks\.registerProtocolClient\(\)/u;
+  if (patchedRegistrationRegex.test(currentSource)) {
+    return currentSource;
+  }
+
+  const registrationRegex =
+    /[A-Za-z_$][\w$]*\.deepLinks\.registerProtocolClient\(\)/gu;
+  const registrations = currentSource.match(registrationRegex) ?? [];
+  if (registrations.length !== 1) {
+    console.warn(
+      "WARN: Could not find unique deep-link protocol registration — skipping Linux protocol client registration patch",
+    );
+    return currentSource;
+  }
+
+  return currentSource.replace(
+    registrationRegex,
+    (registration) => `process.platform!==\`linux\`&&${registration}`,
+  );
+}
+
 function applyLinuxLocalAppServerFeatureEnablementHandlerPatch(currentSource) {
   const method = "set-local-app-server-feature-enablement";
   const featureKeys = [
@@ -595,4 +618,5 @@ module.exports = {
   patchLinuxWorkerFileManagerTarget,
   applyLinuxRemoteControlConfigPreservationPatch,
   applyLinuxXdgDocumentsDirPatch,
+  applyLinuxProtocolClientRegistrationPatch,
 };

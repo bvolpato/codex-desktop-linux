@@ -103,6 +103,7 @@ const {
   applyLinuxLocalAppServerFeatureEnablementHandlerPatch,
   applyLinuxOwlFeatureBindingFallbackPatch,
   applyLinuxRemoteControlConfigPreservationPatch,
+  applyLinuxProtocolClientRegistrationPatch,
   applyLinuxTerminalHostEnvironmentPatch,
   applyLinuxTerminalUserPathPatch,
   applyLinuxWorkerFileManagerPatch,
@@ -1029,6 +1030,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-launch-actions",
     "linux-hotkey-window-prewarm",
     "linux-git-origins-source-fallback",
+    "linux-protocol-client-registration",
     "linux-external-open-env",
     "linux-xdg-documents-dir",
     "linux-projectless-xdg-documents-dir",
@@ -2399,6 +2401,17 @@ test("uses XDG user documents directory for generated projectless workspaces", (
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("leaves Linux protocol registration to the launcher", () => {
+  const source =
+    "I=Date.now(),Me.deepLinks.registerProtocolClient(),t.n(Gu(process.argv)),j(`registered deep link protocol`,I)";
+  const patched = applyPatchTwice(applyLinuxProtocolClientRegistrationPatch, source);
+
+  assert.equal(
+    patched,
+    "I=Date.now(),process.platform!==`linux`&&Me.deepLinks.registerProtocolClient(),t.n(Gu(process.argv)),j(`registered deep link protocol`,I)",
+  );
 });
 
 test("projectless documents asset patch updates Vite build bundle", () => {
